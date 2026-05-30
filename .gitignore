@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.local
+*.key
+*.secret
+credentials.json
+token.json
+
+# Real data / PII — fixtures hold real correspondence, invoices, and the oracle
+/fixtures/
+!/fixtures/README.md
+
+# Local runtime state
+/state/
+*.watermark
+*.sqlite
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
