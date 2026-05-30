@@ -4,7 +4,9 @@ Unit tests for MorningClient auth and caching logic.
 All HTTP is mocked — no real network calls, no real credentials.
 """
 
+import os
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -13,6 +15,7 @@ import pytest
 from morning_bridge.client import (
     TOKEN_TTL_SECONDS,
     MorningClient,
+    _load_dotenv,
     client_from_env,
 )
 
@@ -172,6 +175,45 @@ def test_client_from_env_live_when_env_set(monkeypatch):
     monkeypatch.setenv("MORNING_ENV", "live")
     c = client_from_env()
     assert "sandbox" not in c._base
+
+
+# ── dotenv parsing edge cases ────────────────────────────────────────────────
+
+
+def _write_env(tmp_path: Path, content: str) -> Path:
+    """Write a .env file at the root of a fake two-level dir tree and return the
+    path of a fake 'source file' two levels below that root, so _load_dotenv's
+    upward walk finds the .env on its second step (matching the real layout where
+    client.py is at morning-bridge/morning_bridge/client.py)."""
+    (tmp_path / "pkg").mkdir()
+    env_file = tmp_path / ".env"
+    env_file.write_text(content)
+    fake_source = tmp_path / "pkg" / "client.py"
+    return fake_source
+
+
+def test_dotenv_hash_in_value_preserved(monkeypatch, tmp_path):
+    """A '#' not preceded by whitespace is part of the value, not a comment."""
+    fake_source = _write_env(tmp_path, "MORNING_API_SECRET=abc#def\n")
+    monkeypatch.delenv("MORNING_API_SECRET", raising=False)
+    _load_dotenv(fake_source)
+    assert os.environ.get("MORNING_API_SECRET") == "abc#def"
+
+
+def test_dotenv_inline_comment_stripped(monkeypatch, tmp_path):
+    """A '#' preceded by whitespace is a comment; the value must be clean."""
+    fake_source = _write_env(tmp_path, "MORNING_ENV=sandbox  # sandbox | live\n")
+    monkeypatch.delenv("MORNING_ENV", raising=False)
+    _load_dotenv(fake_source)
+    assert os.environ.get("MORNING_ENV") == "sandbox"
+
+
+def test_dotenv_quoted_value_unquoted(monkeypatch, tmp_path):
+    """Double-quoted values must have their quotes stripped."""
+    fake_source = _write_env(tmp_path, 'MORNING_API_KEY_ID="my-key-id"\n')
+    monkeypatch.delenv("MORNING_API_KEY_ID", raising=False)
+    _load_dotenv(fake_source)
+    assert os.environ.get("MORNING_API_KEY_ID") == "my-key-id"
 
 
 # ── reads.py smoke ───────────────────────────────────────────────────────────

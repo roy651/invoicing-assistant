@@ -39,7 +39,11 @@ def _make_client(*, search_result=None, create_result=None) -> MorningClient:
     mock_http.post.return_value = _ok({"token": "tok"})  # auth
 
     search_resp = _ok(search_result or {"items": []})
-    draft_resp = _ok(create_result or {"id": "doc-123", "status": 0, "number": None})
+    # morning always returns a number even for drafts; signed=False + status=0 = draft
+    draft_resp = _ok(
+        create_result
+        or {"id": "doc-123", "status": 0, "signed": False, "number": 50001}
+    )
 
     # request() is called for every non-auth call; route by path suffix.
     def _route(method, url, **_kwargs):
@@ -136,7 +140,7 @@ def test_dry_run_returns_payload_makes_no_request(monkeypatch):
 
     assert result["dry_run"] is True
     assert result["payload"]["type"] == 305
-    assert result["payload"]["clientId"] == "client-il-001"
+    assert result["payload"]["client"] == {"id": "client-il-001"}
     # No write call — only the search call should be absent too (dry-run exits early).
     assert client._http.request.call_count == 0
 
@@ -156,14 +160,17 @@ def test_build_payload_direct_invoice():
     assert payload["type"] == 305
     assert payload["lang"] == "he"
     assert payload["currency"] == "ILS"
-    assert payload["clientId"] == "client-il-001"
+    assert payload["client"] == {
+        "id": "client-il-001"
+    }  # morning uses client.id not clientId
     assert len(payload["income"]) == 1
     line = payload["income"][0]
     assert line["quantity"] == 1.0
     assert line["unitPrice"] == 5000.0
     assert line["price"] == 5000.0
     assert line["vat"] == 0.18
-    assert "payment" not in payload  # no payment → stays draft
+    assert payload["signed"] is False  # explicitly unsigned = stays draft
+    assert "payment" not in payload
 
 
 def test_build_payload_agency_invoice():
@@ -190,7 +197,7 @@ def test_build_payload_agency_invoice():
 # ── double-bill guard ─────────────────────────────────────────────────────────
 
 
-def test_double_bill_guard_raises_on_matching_description(monkeypatch):
+def test_double_bill_guard_warns_on_matching_description(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "false")
     existing_doc = {
         "items": [
@@ -204,11 +211,14 @@ def test_double_bill_guard_raises_on_matching_description(monkeypatch):
     }
     client = _make_client(search_result=existing_doc)
 
-    with pytest.raises(RuntimeError, match="Double-bill guard"):
-        create_draft(client, _DIRECT_REQUEST)
+    result = create_draft(client, _DIRECT_REQUEST)
+    # Draft is still created — guard is a warning, not a hard block.
+    assert result["id"] == "doc-123"
+    assert result["guard_warnings"]
+    assert "עיצוב לוגו" in result["guard_warnings"][0]
 
 
-def test_double_bill_guard_passes_when_no_overlap(monkeypatch):
+def test_double_bill_guard_clean_when_no_overlap(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "false")
     existing_doc = {
         "items": [
@@ -223,6 +233,7 @@ def test_double_bill_guard_passes_when_no_overlap(monkeypatch):
     client = _make_client(search_result=existing_doc)
     result = create_draft(client, _DIRECT_REQUEST)
     assert result["id"] == "doc-123"
+    assert "guard_warnings" not in result
 
 
 def test_double_bill_guard_ignores_subtitle_lines(monkeypatch):
@@ -252,20 +263,22 @@ def test_double_bill_guard_ignores_subtitle_lines(monkeypatch):
 
 def test_create_raises_if_morning_returns_issued_doc(monkeypatch):
     """
-    If morning somehow returns a closed doc (status=1 or an invoice number),
-    raise so the user knows something unexpected happened.
+    If morning returns status=1 (closed/issued), raise so the user knows.
+    morning always assigns a number even to drafts — the draft indicator is
+    status=0 + signed=False.
     """
     monkeypatch.setenv("DRY_RUN", "false")
-    issued = {"id": "doc-999", "status": 1, "number": "INV-2026-001"}
+    issued = {"id": "doc-999", "status": 1, "signed": True, "number": 50003}
     client = _make_client(create_result=issued)
 
     with pytest.raises(RuntimeError, match="unexpected document state"):
         create_draft(client, _DIRECT_REQUEST)
 
 
-def test_create_raises_if_doc_has_invoice_number(monkeypatch):
+def test_create_raises_if_doc_is_signed(monkeypatch):
+    """signed=True even with status=0 means the doc was finalized — raise."""
     monkeypatch.setenv("DRY_RUN", "false")
-    finalized = {"id": "doc-999", "status": 0, "number": "INV-2026-002"}
+    finalized = {"id": "doc-999", "status": 0, "signed": True, "number": 50004}
     client = _make_client(create_result=finalized)
 
     with pytest.raises(RuntimeError, match="unexpected document state"):

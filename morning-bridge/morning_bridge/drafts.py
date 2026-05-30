@@ -54,21 +54,26 @@ def _build_payload(request: dict) -> dict:
         "type": _DOC_TYPE_TAX_INVOICE,
         "currency": request["currency"],
         "lang": request["language"],
-        "clientId": request["bill_to_client_id"],
+        # morning's document API uses {"client": {"id": "..."}} not "clientId"
+        "client": {"id": request["bill_to_client_id"]},
         "income": income,
-        # Omitting payment array keeps the document as an open draft (status=0,
-        # no invoice number) — morning does not finalise it until the user issues it.
+        # signed=False keeps the document as an open draft (status=0).
+        # morning assigns a sequence number to ALL documents, including unsigned ones —
+        # the draft indicator is signed=False + status=0, not the absence of a number.
+        "signed": False,
     }
 
 
-def _check_double_bill(client: MorningClient, request: dict) -> None:
+def _check_double_bill(client: MorningClient, request: dict) -> list[str]:
     """
     Search the client's open tax-invoice drafts for description matches.
 
-    Raises RuntimeError naming the conflicting descriptions so the caller
-    (the human gate) can resolve before retrying.  Zero false-negatives is more
-    important than zero false-positives here — an unexpected match is cheap to
-    dismiss, a missed double-bill is a client-facing error.
+    Returns a list of warning strings (empty = no conflicts).  This is a soft
+    signal, not a hard block: description matching cannot distinguish a real
+    duplicate from a legitimate recurring unit_based item (e.g. "Medical Image
+    Update" billed every month).  The authoritative dedup lives in the ledger
+    (morning_doc_ref + qty_billed_to_date) and runs at settlement.  Here we
+    surface suspicious matches so the human gate can decide.
     """
     from morning_bridge.reads import (
         DOC_STATUS_OPEN,
@@ -84,7 +89,7 @@ def _check_double_bill(client: MorningClient, request: dict) -> None:
         if float(line.get("unit_price", 0)) > 0
     }
     if not billable_descs:
-        return  # nothing billable to guard against
+        return []
 
     recent = search_documents(
         client,
@@ -102,11 +107,12 @@ def _check_double_bill(client: MorningClient, request: dict) -> None:
 
     conflicts = billable_descs & existing_descs
     if conflicts:
-        raise RuntimeError(
-            "Double-bill guard: open draft(s) already contain matching descriptions. "
-            "Resolve manually before retrying.\n"
-            f"  Conflicting: {sorted(conflicts)}"
-        )
+        return [
+            "Possible duplicate: open draft(s) already contain matching line descriptions. "
+            "Verify this is not a double-bill before issuing.\n"
+            f"  Matching: {sorted(conflicts)}"
+        ]
+    return []
 
 
 def create_draft(client: MorningClient, request: dict) -> dict:
@@ -126,20 +132,24 @@ def create_draft(client: MorningClient, request: dict) -> dict:
     if os.environ.get("DRY_RUN", "").lower() == "true":
         return {"dry_run": True, "payload": payload}
 
-    _check_double_bill(client, request)
+    guard_warnings = _check_double_bill(client, request)
 
     result = client._create("/documents", payload)
 
-    # Verify the API returned a draft, not an issued document.
-    # status=0 → Open/draft; a missing invoiceNumber confirms it was not finalized.
+    # Verify the API returned a draft.
+    # morning's create response omits status (returns None) but includes signed.
+    # signed=False is the create-time indicator; status=0 is confirmed on read-back.
     status = result.get("status")
-    invoice_num = result.get("number") or result.get("invoiceNumber")
-    if status != 0 or invoice_num:
+    signed = result.get("signed")
+    if signed or (status is not None and status != 0):
         raise RuntimeError(
             f"morning returned an unexpected document state after create: "
-            f"status={status!r}, invoiceNumber={invoice_num!r}. "
-            "Expected status=0 and no invoice number (draft)."
+            f"status={status!r}, signed={signed!r}. "
+            "Expected signed=False (draft)."
         )
+
+    if guard_warnings:
+        result["guard_warnings"] = guard_warnings
 
     return result
 

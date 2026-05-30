@@ -19,11 +19,14 @@ Rate limit: ~3 req/s; MIN_REQUEST_INTERVAL enforces 350 ms between calls.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
 
 import httpx
+
+_log = logging.getLogger(__name__)
 
 PRODUCTION_BASE = "https://api.greeninvoice.co.il/api/v1"
 SANDBOX_BASE = "https://sandbox.d.greeninvoice.co.il/api/v1"
@@ -55,6 +58,8 @@ class MorningClient:
         self._token_obtained_at: float = 0.0
         self._last_request_at: float = 0.0
         self._http = http_client or httpx.Client(timeout=30.0)
+        env_label = "SANDBOX" if sandbox else "⚠ PRODUCTION"
+        _log.warning("morning-bridge: %s — %s", env_label, self._base)
 
     # ── rate limiting ────────────────────────────────────────────────────────
 
@@ -154,18 +159,19 @@ class MorningClient:
 # ── factory ──────────────────────────────────────────────────────────────────
 
 
-def _load_dotenv() -> None:
-    """Load .env from the repo root if it exists (no third-party dep required)."""
-    here = Path(__file__).resolve()
+def _load_dotenv(_here: Path | None = None) -> None:
+    """
+    Load .env from the repo root if it exists (walks up from this file).
+
+    _here is a private parameter for testing only — callers omit it.
+    """
+    from dotenv import load_dotenv
+
+    here = (_here or Path(__file__)).resolve()
     for candidate in [here.parent, here.parent.parent, here.parent.parent.parent]:
         env_file = candidate / ".env"
         if env_file.exists():
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, val = line.partition("=")
-                    val = val.split("#")[0].strip()  # strip inline comments
-                    os.environ.setdefault(key.strip(), val)
+            load_dotenv(env_file, override=False)
             return
 
 

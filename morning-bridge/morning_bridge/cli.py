@@ -20,6 +20,7 @@ import sys
 
 from morning_bridge.client import client_from_env
 from morning_bridge import reads
+from morning_bridge.drafts import create_draft
 
 
 def _print(data: object) -> None:
@@ -77,6 +78,28 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("download-links", help="GET /documents/{id}/download/links")
     p.add_argument("--id", required=True)
 
+    p = sub.add_parser(
+        "create-draft",
+        help="POST /documents — create a persisted draft (sandbox only)",
+    )
+    p.add_argument("--client-id", required=True, dest="bill_to_client_id")
+    p.add_argument("--lang", required=True, choices=["en", "he"])
+    p.add_argument("--currency", required=True, choices=["USD", "ILS"])
+    p.add_argument("--vat", required=True, type=float, dest="vat_rate")
+    p.add_argument(
+        "--line",
+        action="append",
+        dest="lines",
+        metavar="DESC:QTY:UNIT_PRICE",
+        required=True,
+        help="Repeat for each line. Example: --line 'Logo design:1:5000'",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print payload without creating (sets DRY_RUN=true for this call)",
+    )
+
     args = parser.parse_args(argv)
 
     try:
@@ -123,6 +146,36 @@ def main(argv: list[str] | None = None) -> int:
                 _print(reads.get_document(client, args.id))
             case "download-links":
                 _print(reads.get_document_download_links(client, args.id))
+            case "create-draft":
+                lines = []
+                for raw in args.lines:
+                    parts = raw.rsplit(":", 2)
+                    if len(parts) != 3:
+                        print(
+                            f"Error: --line must be DESC:QTY:UNIT_PRICE, got {raw!r}",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    desc, qty, unit_price = parts
+                    lines.append(
+                        {
+                            "description": desc,
+                            "quantity": float(qty),
+                            "unit_price": float(unit_price),
+                        }
+                    )
+                request = {
+                    "bill_to_client_id": args.bill_to_client_id,
+                    "language": args.lang,
+                    "currency": args.currency,
+                    "vat_rate": args.vat_rate,
+                    "lines": lines,
+                }
+                if args.dry_run:
+                    import os as _os
+
+                    _os.environ["DRY_RUN"] = "true"
+                _print(create_draft(client, request))
 
     return 0
 
