@@ -1,0 +1,28 @@
+[extend]
+# Keep all ~160 built-in gitleaks rules active; add project-specific rules below.
+useDefault = true
+
+# morning (Green Invoice) API secret.
+# Fires on any non-placeholder value (entropy >= 3.5) assigned to MORNING_API_SECRET.
+[[rules]]
+id = "morning-api-secret"
+description = "morning (Green Invoice) API secret"
+regex = '''(?i)MORNING_API_SECRET\s*[=:]\s*["']?([A-Za-z0-9_\-]{8,})["']?'''
+secretGroup = 1
+entropy = 3.5
+
+[rules.allowlist]
+description = "placeholder values from .env.example"
+regexes = ['''(?i)^replace_me$''']
+
+# morning (Green Invoice) API key ID.
+[[rules]]
+id = "morning-api-key-id"
+description = "morning (Green Invoice) API key ID"
+regex = '''(?i)MORNING_API_KEY_ID\s*[=:]\s*["']?([A-Za-z0-9_\-]{8,})["']?'''
+secretGroup = 1
+entropy = 3.0
+
+[rules.allowlist]
+description = "placeholder values from .env.example"
+regexes = ['''(?i)^replace_me$''']

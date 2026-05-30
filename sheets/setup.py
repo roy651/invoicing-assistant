@@ -2,8 +2,9 @@
 """
 Bootstrap the invoicing-assistant Google Sheet.
 
-Creates the six tabs (ClientProfiles, PriceBook, Agreements, Ledger,
-OpeningBalances, Config) with exact column headers and placeholder seed rows.
+Creates five tabs (ClientProfiles, Agreements, Ledger, OpeningBalances, Config)
+with exact column headers and placeholder seed rows.
+PriceBook is not a Sheet tab — it is read from data/price_book.csv at runtime.
 Idempotent: existing tabs are left untouched.
 
 Setup (one-time):

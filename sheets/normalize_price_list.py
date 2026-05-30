@@ -10,7 +10,7 @@ Source
 
 Output (gitignored — contains real prices)
 ------------------------------------------
-  fixtures/generated/price_book.csv
+  data/price_book.csv
 
 price_id algorithm  (CONTRACT — ledger.price_ref must equal price_book.price_id exactly)
 ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ _HERE = Path(__file__).parent
 _REPO = _HERE.parent
 
 SOURCE_CSV = _REPO / "fixtures" / "2026PriceList.csv"
-OUTPUT_CSV = _REPO / "fixtures" / "generated" / "price_book.csv"
+OUTPUT_CSV = _REPO / "data" / "price_book.csv"
 
 # Import column order from the authoritative schema definition.
 sys.path.insert(0, str(_HERE))
@@ -245,9 +245,7 @@ def main() -> None:
         writer.writerows(rows)
 
     print(f"\nWrote {len(rows)} rows → {OUTPUT_CSV}")
-    print(
-        "Load into the live PriceBook tab via sheets/setup.py or Google Sheets import."
-    )
+    print("The invoicing skill reads this file directly at runtime (not via Sheets).")
     print(
         "To spot-check 2025 values against the PDF, call spot_check() — see docstring."
     )

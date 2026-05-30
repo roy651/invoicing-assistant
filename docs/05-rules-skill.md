@@ -14,7 +14,8 @@ cycle from `02-reconciliation.md`. This doc is the spec; the deliverable is the 
 ## Inputs it reads
 
 - Email (via the IMAP skill) and transcripts (folder reader) since the watermark.
-- State Sheets: Client Profiles, Price Book (normalized), Agreements Log, Work Item Ledger.
+- State Sheets: Client Profiles, Agreements Log, Work Item Ledger.
+- Price Book: `data/price_book.csv` (local disk, produced by `sheets/normalize_price_list.py`).
 - morning (via the bridge, read endpoints) for settlement + history.
 
 ## The cycle (authoritative steps — see `02` for the state machine)

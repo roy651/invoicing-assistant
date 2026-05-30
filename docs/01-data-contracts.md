@@ -3,8 +3,13 @@
 The authoritative shapes. All other docs and all code defer to this file. If an
 implementer is unsure of a field, it is defined here or it does not exist.
 
-All state stores are Google Sheets (one tab each) so the user can read and edit them
-directly. Code reads/writes via the Drive connector. IDs are config (`.env` / Keychain).
+The Sheets store holds the human-editable state (ClientProfiles, Agreements, Ledger,
+OpeningBalances, Config). Code reads/writes via the Drive connector. IDs are config
+(`.env` / Keychain).
+
+The Price Book is derived reference data, not human-edited state. It lives on disk at
+`data/price_book.csv` (gitignored), produced by running `sheets/normalize_price_list.py`.
+The agent reads it directly from disk at runtime.
 
 ---
 
@@ -34,8 +39,9 @@ The electric-company-style manual client is
 
 Normalized, **versioned**, **source-format-agnostic**. The raw 2026 list is a Google
 Sheet; the 2025 list (still in effect for older quotes) is a PDF; future lists may be
-anything. A normalizer converts each source into rows of this shape. **At runtime the
-agent reads only this normalized table — never the raw PDF/Sheet.**
+anything. `sheets/normalize_price_list.py` converts each source into rows of this shape
+and writes `data/price_book.csv`. **At runtime the agent reads `data/price_book.csv`
+directly from disk — never the raw PDF/Sheet, and never a Sheets tab.**
 
 | Column | Type | Notes |
 | --- | --- | --- |

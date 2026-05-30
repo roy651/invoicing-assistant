@@ -15,6 +15,9 @@ token.json
 *.watermark
 *.sqlite
 
+# Runtime data (derived, not source; may contain real prices)
+/data/
+
 # OS / editor
 .DS_Store
 .idea/
@@ -24,4 +27,3 @@ __pycache__/
 node_modules/
 dist/
 build/
-uv.lock

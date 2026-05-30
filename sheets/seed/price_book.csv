@@ -1,3 +1,0 @@
-price_id,version,effective_from,effective_to,category,item,price_low,price_high,currency,is_range,notes
-2026-example-fixed,2026,2026-01-01,,Example Category,Fixed Price Item,5000,5000,USD,FALSE,
-2026-example-range,2026,2026-01-01,,Example Category,Range Item,8000,10000,USD,TRUE,Exact price resolved per quote and stored on the work item; never auto-picked

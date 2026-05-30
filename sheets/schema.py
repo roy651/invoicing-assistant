@@ -90,9 +90,10 @@ OPENING_BALANCES = [
 CONFIG = ["key", "value", "notes"]
 
 # Ordered mapping used by setup.py to create tabs in display order.
+# PriceBook is intentionally absent: it is derived reference data read from
+# data/price_book.csv at runtime, not a human-edited Sheet tab.
 TABS: dict[str, list[str]] = {
     "ClientProfiles": CLIENT_PROFILES,
-    "PriceBook": PRICE_BOOK,
     "Agreements": AGREEMENTS,
     "Ledger": LEDGER,
     "OpeningBalances": OPENING_BALANCES,
