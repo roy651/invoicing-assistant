@@ -1,0 +1,3 @@
+bill_to,is_agency,managed_by_agent,language,currency,vat_rate,morning_client_id,notes
+AGENCY_PLACEHOLDER,TRUE,TRUE,en,USD,0.00,,Replace with real agency name and morning_client_id
+DIRECT_MANUAL_PLACEHOLDER,FALSE,FALSE,he,ILS,0.18,,managed_by_agent=FALSE: agent will not propose or flag orphans for this client

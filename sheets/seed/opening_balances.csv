@@ -1,0 +1,2 @@
+item_id,bill_to,end_client,description,unit_price,total_qty,qty_billed_to_date
+ITEM-PLACEHOLDER-001,AGENCY_PLACEHOLDER,ENDCLIENT_PLACEHOLDER,Example partially-billed fixed quote job,8000,1.0,0.3
