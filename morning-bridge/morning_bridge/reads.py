@@ -99,7 +99,8 @@ def search_items(
 # ── Documents ────────────────────────────────────────────────────────────────
 
 # Document type codes (from morning API enum)
-DOC_TYPE_TAX_INVOICE = 305
+DOC_TYPE_PROFORMA = 300  # Proforma / חשבון עסקה — non-fiscal review artifact
+DOC_TYPE_TAX_INVOICE = 305  # Tax Invoice — fiscal; issuance is human-only
 DOC_TYPE_RECEIPT = 400
 DOC_TYPE_PRICE_QUOTE = 10
 

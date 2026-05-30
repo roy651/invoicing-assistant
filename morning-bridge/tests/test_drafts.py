@@ -1,5 +1,5 @@
 """
-Unit tests for drafts.create_draft.
+Unit tests for drafts.create_proforma.
 
 All HTTP is mocked — no real network calls, no real credentials.
 """
@@ -12,7 +12,7 @@ import pytest
 
 from morning_bridge import drafts
 from morning_bridge.client import MorningClient
-from morning_bridge.drafts import _build_payload, create_draft
+from morning_bridge.drafts import _build_payload, create_proforma
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -33,23 +33,21 @@ def _make_client(*, search_result=None, create_result=None) -> MorningClient:
     Return a MorningClient whose HTTP is mocked.
 
     search_result: what POST /documents/search returns (default: empty list).
-    create_result: what POST /documents returns (default: open draft stub).
+    create_result: what POST /documents returns (default: proforma stub).
     """
     mock_http = MagicMock(spec=httpx.Client)
     mock_http.post.return_value = _ok({"token": "tok"})  # auth
 
     search_resp = _ok(search_result or {"items": []})
-    # morning always returns a number even for drafts; signed=False + status=0 = draft
-    draft_resp = _ok(
-        create_result
-        or {"id": "doc-123", "status": 0, "signed": False, "number": 50001}
+    # morning proforma response: type=300, number in 40001+ series
+    proforma_resp = _ok(
+        create_result or {"id": "doc-123", "type": 300, "number": 40001}
     )
 
-    # request() is called for every non-auth call; route by path suffix.
     def _route(method, url, **_kwargs):
         if "/search" in url:
             return search_resp
-        return draft_resp
+        return proforma_resp
 
     mock_http.request.side_effect = _route
 
@@ -101,7 +99,7 @@ _AGENCY_REQUEST = {
 
 
 def test_drafts_exact_surface():
-    """drafts.py exposes exactly {create_draft} — no accidental additions."""
+    """drafts.py exposes exactly {create_proforma} — no accidental additions."""
     import inspect
 
     public = {
@@ -109,9 +107,26 @@ def test_drafts_exact_surface():
         for name, obj in inspect.getmembers(drafts, inspect.isfunction)
         if not name.startswith("_") and obj.__module__ == drafts.__name__
     }
-    assert public == {"create_draft"}, (
+    assert public == {"create_proforma"}, (
         f"Unexpected public functions in drafts.py: {public}"
     )
+
+
+# ── type lock — structurally cannot create fiscal documents ──────────────────
+
+
+def test_type_injection_raises(monkeypatch):
+    """Passing 'type' in the request must raise — bridge cannot create type-305."""
+    monkeypatch.setenv("DRY_RUN", "true")
+    with pytest.raises(ValueError, match="hard-codes type=300"):
+        create_proforma(MagicMock(), {**_DIRECT_REQUEST, "type": 305})
+
+
+def test_type_300_not_in_request_input():
+    """type=300 must not be a caller-supplied field — it's baked into the payload."""
+    payload = _build_payload(_DIRECT_REQUEST)
+    assert payload["type"] == 300
+    assert "type" not in _DIRECT_REQUEST  # sanity: fixture doesn't leak type
 
 
 # ── write allowlist ───────────────────────────────────────────────────────────
@@ -125,7 +140,7 @@ def test_write_allowlist_blocks_bad_path():
 
 def test_write_allowlist_passes_documents():
     client = _make_client()
-    result = client._create("/documents", {"type": 305})
+    result = client._create("/documents", {"type": 300})
     assert result["id"] == "doc-123"
 
 
@@ -136,19 +151,18 @@ def test_dry_run_returns_payload_makes_no_request(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "true")
     client = _make_client()
 
-    result = create_draft(client, _DIRECT_REQUEST)
+    result = create_proforma(client, _DIRECT_REQUEST)
 
     assert result["dry_run"] is True
-    assert result["payload"]["type"] == 305
+    assert result["payload"]["type"] == 300
     assert result["payload"]["client"] == {"id": "client-il-001"}
-    # No write call — only the search call should be absent too (dry-run exits early).
     assert client._http.request.call_count == 0
 
 
 def test_dry_run_false_proceeds(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "false")
     client = _make_client()
-    result = create_draft(client, _DIRECT_REQUEST)
+    result = create_proforma(client, _DIRECT_REQUEST)
     assert result.get("id") == "doc-123"
 
 
@@ -157,24 +171,23 @@ def test_dry_run_false_proceeds(monkeypatch):
 
 def test_build_payload_direct_invoice():
     payload = _build_payload(_DIRECT_REQUEST)
-    assert payload["type"] == 305
+    assert payload["type"] == 300
     assert payload["lang"] == "he"
     assert payload["currency"] == "ILS"
-    assert payload["client"] == {
-        "id": "client-il-001"
-    }  # morning uses client.id not clientId
+    assert payload["client"] == {"id": "client-il-001"}
     assert len(payload["income"]) == 1
     line = payload["income"][0]
     assert line["quantity"] == 1.0
     assert line["unitPrice"] == 5000.0
     assert line["price"] == 5000.0
     assert line["vat"] == 0.18
-    assert payload["signed"] is False  # explicitly unsigned = stays draft
     assert "payment" not in payload
+    assert "signed" not in payload  # proforma needs no signed flag
 
 
 def test_build_payload_agency_invoice():
     payload = _build_payload(_AGENCY_REQUEST)
+    assert payload["type"] == 300
     assert payload["lang"] == "en"
     assert payload["currency"] == "USD"
     assert len(payload["income"]) == 3
@@ -199,20 +212,19 @@ def test_build_payload_agency_invoice():
 
 def test_double_bill_guard_warns_on_matching_description(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "false")
-    existing_doc = {
+    existing_proforma = {
         "items": [
             {
-                "status": 0,
+                "type": 300,
                 "income": [
                     {"description": "עיצוב לוגו", "unitPrice": 5000.0},
                 ],
             }
         ]
     }
-    client = _make_client(search_result=existing_doc)
+    client = _make_client(search_result=existing_proforma)
 
-    result = create_draft(client, _DIRECT_REQUEST)
-    # Draft is still created — guard is a warning, not a hard block.
+    result = create_proforma(client, _DIRECT_REQUEST)
     assert result["id"] == "doc-123"
     assert result["guard_warnings"]
     assert "עיצוב לוגו" in result["guard_warnings"][0]
@@ -220,18 +232,18 @@ def test_double_bill_guard_warns_on_matching_description(monkeypatch):
 
 def test_double_bill_guard_clean_when_no_overlap(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "false")
-    existing_doc = {
+    existing_proforma = {
         "items": [
             {
-                "status": 0,
+                "type": 300,
                 "income": [
                     {"description": "Different work item", "unitPrice": 500.0},
                 ],
             }
         ]
     }
-    client = _make_client(search_result=existing_doc)
-    result = create_draft(client, _DIRECT_REQUEST)
+    client = _make_client(search_result=existing_proforma)
+    result = create_proforma(client, _DIRECT_REQUEST)
     assert result["id"] == "doc-123"
     assert "guard_warnings" not in result
 
@@ -239,12 +251,11 @@ def test_double_bill_guard_clean_when_no_overlap(monkeypatch):
 def test_double_bill_guard_ignores_subtitle_lines(monkeypatch):
     """Subtitle lines (unit_price=0) must not trigger the guard."""
     monkeypatch.setenv("DRY_RUN", "false")
-    existing_doc = {
+    existing_proforma = {
         "items": [
             {
-                "status": 0,
+                "type": 300,
                 "income": [
-                    # same text as the subtitle in _AGENCY_REQUEST, but it's zero-priced
                     {
                         "description": "------------ Acme Corp ------------",
                         "unitPrice": 0.0,
@@ -253,36 +264,22 @@ def test_double_bill_guard_ignores_subtitle_lines(monkeypatch):
             }
         ]
     }
-    client = _make_client(search_result=existing_doc)
-    result = create_draft(client, _AGENCY_REQUEST)
+    client = _make_client(search_result=existing_proforma)
+    result = create_proforma(client, _AGENCY_REQUEST)
     assert result["id"] == "doc-123"
 
 
-# ── post-create validation ────────────────────────────────────────────────────
+# ── post-create type verification ─────────────────────────────────────────────
 
 
-def test_create_raises_if_morning_returns_issued_doc(monkeypatch):
-    """
-    If morning returns status=1 (closed/issued), raise so the user knows.
-    morning always assigns a number even to drafts — the draft indicator is
-    status=0 + signed=False.
-    """
+def test_create_raises_if_morning_returns_wrong_type(monkeypatch):
+    """If morning returns a type other than 300, raise immediately."""
     monkeypatch.setenv("DRY_RUN", "false")
-    issued = {"id": "doc-999", "status": 1, "signed": True, "number": 50003}
-    client = _make_client(create_result=issued)
+    wrong = {"id": "doc-999", "type": 305, "number": 50010}
+    client = _make_client(create_result=wrong)
 
-    with pytest.raises(RuntimeError, match="unexpected document state"):
-        create_draft(client, _DIRECT_REQUEST)
-
-
-def test_create_raises_if_doc_is_signed(monkeypatch):
-    """signed=True even with status=0 means the doc was finalized — raise."""
-    monkeypatch.setenv("DRY_RUN", "false")
-    finalized = {"id": "doc-999", "status": 0, "signed": True, "number": 50004}
-    client = _make_client(create_result=finalized)
-
-    with pytest.raises(RuntimeError, match="unexpected document state"):
-        create_draft(client, _DIRECT_REQUEST)
+    with pytest.raises(RuntimeError, match="type=305"):
+        create_proforma(client, _DIRECT_REQUEST)
 
 
 # ── validation ────────────────────────────────────────────────────────────────
@@ -291,11 +288,11 @@ def test_create_raises_if_doc_is_signed(monkeypatch):
 def test_create_raises_on_missing_fields(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "true")
     with pytest.raises(ValueError, match="missing required fields"):
-        create_draft(MagicMock(), {"lines": []})
+        create_proforma(MagicMock(), {"lines": []})
 
 
 def test_create_raises_on_empty_lines(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "true")
     req = {**_DIRECT_REQUEST, "lines": []}
     with pytest.raises(ValueError, match="lines must not be empty"):
-        create_draft(MagicMock(), req)
+        create_proforma(MagicMock(), req)

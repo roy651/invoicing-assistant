@@ -6,8 +6,10 @@ Usage (run from repo root):
   uv run python -m morning_bridge.cli get-business
   uv run python -m morning_bridge.cli search-clients --name "Acme"
   uv run python -m morning_bridge.cli search-items
-  uv run python -m morning_bridge.cli search-documents --type 305 --status 0
+  uv run python -m morning_bridge.cli search-documents --type 300 --status 0
   uv run python -m morning_bridge.cli get-document --id <id>
+  uv run python -m morning_bridge.cli create-proforma --client-id <id> --lang he \
+      --currency ILS --vat 0.18 --line 'Logo design:1:5000' [--dry-run]
 
 Reads MORNING_API_KEY_ID / MORNING_API_SECRET from .env (sandbox only).
 """
@@ -20,7 +22,7 @@ import sys
 
 from morning_bridge.client import client_from_env
 from morning_bridge import reads
-from morning_bridge.drafts import create_draft
+from morning_bridge.drafts import create_proforma
 
 
 def _print(data: object) -> None:
@@ -79,8 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--id", required=True)
 
     p = sub.add_parser(
-        "create-draft",
-        help="POST /documents — create a persisted draft (sandbox only)",
+        "create-proforma",
+        help="POST /documents — create a Proforma type-300 (non-fiscal, sandbox only)",
     )
     p.add_argument("--client-id", required=True, dest="bill_to_client_id")
     p.add_argument("--lang", required=True, choices=["en", "he"])
@@ -146,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 _print(reads.get_document(client, args.id))
             case "download-links":
                 _print(reads.get_document_download_links(client, args.id))
-            case "create-draft":
+            case "create-proforma":
                 lines = []
                 for raw in args.lines:
                     parts = raw.rsplit(":", 2)
@@ -175,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
                     import os as _os
 
                     _os.environ["DRY_RUN"] = "true"
-                _print(create_draft(client, request))
+                _print(create_proforma(client, request))
 
     return 0
 

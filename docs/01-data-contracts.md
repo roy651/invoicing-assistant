@@ -167,10 +167,16 @@ not 0.3). See `02-reconciliation.md`.
 
 ---
 
-## 5. morning draft payload mapping
+## 5. morning proforma payload mapping
 
-How a ready-to-bill ledger row becomes a create-draft call. The bridge owns the exact
-API field names (`03-morning-bridge.md`); this defines the *semantic* mapping.
+How a ready-to-bill ledger row becomes a `create_proforma` call. The bridge owns the
+exact API field names (`03-morning-bridge.md`); this defines the *semantic* mapping.
+
+**Review artifact is a Proforma (type 300 / חשבון עסקה)**, not a Tax Invoice (305).
+`POST /documents` with type 305 issues a real fiscal document immediately — there is no
+draft/unsigned mode for invoices. The Proforma is non-fiscal, deletable, and converted
+to a real invoice by the human in morning when they approve the review packet. That
+conversion is the issuance step and is **out of this system's automated scope**.
 
 ### Document grouping
 

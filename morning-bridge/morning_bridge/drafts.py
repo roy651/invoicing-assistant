@@ -1,15 +1,28 @@
 """
-Draft creation — Task 1.4.
+Proforma creation — Task 1.4.
 
-create_draft is the ONLY public function. It posts to /documents via the
-restricted client._create path (write allowlist = {"/documents"}).
+create_proforma is the ONLY public function.  It posts to /documents with
+type=300 (Proforma / חשבון עסקה) via the restricted client._create path.
+
+Why Proforma and NOT Tax Invoice (305):
+  morning's POST /documents always issues a real fiscal document when type=305.
+  signed=false does not prevent issuance; /preview returns only an ephemeral
+  base64 render.  Proforma (type 300) is non-fiscal, has its own series
+  (40001+), is not reported to the tax authority, is deletable, and is
+  converted to a real invoice by the human in morning when they choose to issue.
+  That conversion — and ONLY that conversion — is the issuance step.  It is
+  OUT of this system's automated scope.
 
 Safety controls:
+  Type lock — create_proforma hard-codes type=300 and RAISES if the caller
+    attempts to inject a different type.  The bridge is physically incapable
+    of creating type-305 or any other fiscal document.
   DRY_RUN=true  — return the payload that would be sent; create nothing.
-  Double-bill guard — search open invoices for the same client before creating;
-    raise on any description match, requiring human resolution.
+  Double-bill guard — search existing proformas for the same client before
+    creating; surface a warning if descriptions match (soft signal, not hard
+    block — recurring items bill identically month-to-month).
 
-Input shape (CreateDraftRequest):
+Input shape (CreateProformaRequest):
   bill_to_client_id: str      morning client id
   language:          str      "en" | "he"
   currency:          str      "USD" | "ILS"
@@ -22,7 +35,7 @@ Input shape (CreateDraftRequest):
 A subtitle line (agency end-client separator) is quantity=1, unit_price=0.00 —
 the invoicing skill builds it; the bridge passes it through unchanged.
 
-See docs/03 §Create-draft input contract and docs/01 §5 for the semantic mapping.
+See docs/03 and docs/01 §5 for the semantic mapping.
 """
 
 from __future__ import annotations
@@ -31,11 +44,11 @@ import os
 
 from morning_bridge.client import MorningClient
 
-_DOC_TYPE_TAX_INVOICE = 305
+_DOC_TYPE_PROFORMA = 300
 
 
 def _build_payload(request: dict) -> dict:
-    """Map CreateDraftRequest → morning POST /documents body."""
+    """Map CreateProformaRequest → morning POST /documents body."""
     income = []
     for line in request["lines"]:
         qty = float(line["quantity"])
@@ -51,38 +64,25 @@ def _build_payload(request: dict) -> dict:
             }
         )
     return {
-        "type": _DOC_TYPE_TAX_INVOICE,
+        "type": _DOC_TYPE_PROFORMA,
         "currency": request["currency"],
         "lang": request["language"],
-        # morning's document API uses {"client": {"id": "..."}} not "clientId"
         "client": {"id": request["bill_to_client_id"]},
         "income": income,
-        # signed=False keeps the document as an open draft (status=0).
-        # morning assigns a sequence number to ALL documents, including unsigned ones —
-        # the draft indicator is signed=False + status=0, not the absence of a number.
-        "signed": False,
     }
 
 
 def _check_double_bill(client: MorningClient, request: dict) -> list[str]:
     """
-    Search the client's open tax-invoice drafts for description matches.
+    Search existing proformas for this client for description matches.
 
-    Returns a list of warning strings (empty = no conflicts).  This is a soft
-    signal, not a hard block: description matching cannot distinguish a real
-    duplicate from a legitimate recurring unit_based item (e.g. "Medical Image
-    Update" billed every month).  The authoritative dedup lives in the ledger
-    (morning_doc_ref + qty_billed_to_date) and runs at settlement.  Here we
-    surface suspicious matches so the human gate can decide.
+    Returns a list of warning strings (empty = no conflicts).  Soft signal:
+    description matching cannot distinguish a real duplicate from a recurring
+    unit_based item billed identically each month.  Authoritative dedup lives
+    in the ledger (morning_doc_ref + qty_billed_to_date) at settlement.
     """
-    from morning_bridge.reads import (
-        DOC_STATUS_OPEN,
-        DOC_TYPE_TAX_INVOICE,
-        search_documents,
-    )
+    from morning_bridge.reads import DOC_TYPE_PROFORMA, search_documents
 
-    # Non-zero unit_price lines are the billable lines; subtitle (price=0) lines
-    # are separators and are excluded from the guard.
     billable_descs = {
         line["description"]
         for line in request["lines"]
@@ -93,8 +93,7 @@ def _check_double_bill(client: MorningClient, request: dict) -> list[str]:
 
     recent = search_documents(
         client,
-        doc_type=[DOC_TYPE_TAX_INVOICE],
-        status=[DOC_STATUS_OPEN],
+        doc_type=[DOC_TYPE_PROFORMA],
         client_id=request["bill_to_client_id"],
     )
 
@@ -108,24 +107,32 @@ def _check_double_bill(client: MorningClient, request: dict) -> list[str]:
     conflicts = billable_descs & existing_descs
     if conflicts:
         return [
-            "Possible duplicate: open draft(s) already contain matching line descriptions. "
-            "Verify this is not a double-bill before issuing.\n"
+            "Possible duplicate: existing proforma(s) contain matching line descriptions. "
+            "Verify this is not a double-bill before the human issues the invoice.\n"
             f"  Matching: {sorted(conflicts)}"
         ]
     return []
 
 
-def create_draft(client: MorningClient, request: dict) -> dict:
+def create_proforma(client: MorningClient, request: dict) -> dict:
     """
-    Create a persisted draft invoice in morning (status=Open, no invoice number).
+    Create a Proforma invoice (type 300, חשבון עסקה) in morning.
 
-    Returns the morning API response dict.  In dry-run mode (DRY_RUN=true env var)
-    returns {"dry_run": True, "payload": <the body that would be sent>} and makes
-    no HTTP call.
+    Type is hard-coded to 300.  Passing 'type' in the request raises ValueError
+    — this function is structurally incapable of creating a fiscal document.
 
-    Raises RuntimeError when the double-bill guard fires.
-    Raises ValueError when required request fields are missing.
+    Returns the morning API response dict.  In dry-run mode (DRY_RUN=true env
+    var) returns {"dry_run": True, "payload": ...} and makes no HTTP call.
+
+    Raises ValueError when the request contains a type override or is missing
+    required fields.
     """
+    if "type" in request:
+        raise ValueError(
+            "create_proforma hard-codes type=300 (Proforma / חשבון עסקה). "
+            "Do not pass 'type' in the request — this function is structurally "
+            "incapable of creating tax invoices or any other fiscal document type."
+        )
     _validate_request(request)
     payload = _build_payload(request)
 
@@ -136,16 +143,11 @@ def create_draft(client: MorningClient, request: dict) -> dict:
 
     result = client._create("/documents", payload)
 
-    # Verify the API returned a draft.
-    # morning's create response omits status (returns None) but includes signed.
-    # signed=False is the create-time indicator; status=0 is confirmed on read-back.
-    status = result.get("status")
-    signed = result.get("signed")
-    if signed or (status is not None and status != 0):
+    doc_type = result.get("type")
+    if doc_type != _DOC_TYPE_PROFORMA:
         raise RuntimeError(
-            f"morning returned an unexpected document state after create: "
-            f"status={status!r}, signed={signed!r}. "
-            "Expected signed=False (draft)."
+            f"morning returned type={doc_type!r} — expected {_DOC_TYPE_PROFORMA} (Proforma). "
+            "Something unexpected happened; do not proceed."
         )
 
     if guard_warnings:
@@ -159,10 +161,10 @@ def _validate_request(request: dict) -> None:
     missing = required - request.keys()
     if missing:
         raise ValueError(
-            f"CreateDraftRequest missing required fields: {sorted(missing)}"
+            f"CreateProformaRequest missing required fields: {sorted(missing)}"
         )
     if not request["lines"]:
-        raise ValueError("CreateDraftRequest.lines must not be empty")
+        raise ValueError("CreateProformaRequest.lines must not be empty")
     for i, line in enumerate(request["lines"]):
         for field in ("description", "quantity", "unit_price"):
             if field not in line:
