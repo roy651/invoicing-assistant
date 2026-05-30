@@ -89,7 +89,9 @@ def main() -> None:
         else:
             ws.update([columns], value_input_option="USER_ENTERED")
         row_count = len(seed_rows) - 1 if seed_rows else 0
-        print(f"  {tab_name}: created ({row_count} seed row{'s' if row_count != 1 else ''})")
+        print(
+            f"  {tab_name}: created ({row_count} seed row{'s' if row_count != 1 else ''})"
+        )
 
     # Remove the blank default sheet Google creates on a fresh spreadsheet.
     try:

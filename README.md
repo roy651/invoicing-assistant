@@ -40,6 +40,27 @@ enforced in code where possible, not only in prompts.
 4. **No secrets in the repo.** Credentials live in the macOS Keychain. See
    `.env.example` and `.gitignore`.
 
+## Development setup
+
+```bash
+uv sync --group dev        # installs pre-commit into the project venv
+uv run pre-commit install  # wires hooks into .git/hooks/pre-commit
+```
+
+Every commit then runs automatically:
+- **gitleaks** — content-scans the diff for detected secrets (API keys, tokens,
+  private keys). Blocks the commit if anything is found.
+- **detect-private-key** — additional guard for PEM/SSH private key blocks.
+- **ruff + ruff-format** — lint and format Python files.
+- File hygiene: no large files, no merge-conflict markers, consistent newlines.
+
+To run hooks manually against all files: `uv run pre-commit run --all-files`
+
+To update hook versions: `uv run pre-commit autoupdate`
+
+> **Note:** gitleaks scans file *content*, not just filenames. A real API key
+> anywhere in a staged file will block the commit regardless of `.gitignore`.
+
 ## Secrets & privacy
 
 This repo may become public. Before pushing:

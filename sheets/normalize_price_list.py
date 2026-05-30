@@ -132,7 +132,9 @@ def normalize(source: Path = SOURCE_CSV) -> list[dict]:
                 try:
                     price_low, price_high, is_range = _parse_price(raw)
                 except ValueError as exc:
-                    print(f"  WARNING line {lineno} [{version}]: {exc}", file=sys.stderr)
+                    print(
+                        f"  WARNING line {lineno} [{version}]: {exc}", file=sys.stderr
+                    )
                     continue
 
                 if version == "2025":
@@ -146,21 +148,39 @@ def normalize(source: Path = SOURCE_CSV) -> list[dict]:
                     effective_from = ""
                     effective_to = ""
                     draft_prefix = "DRAFT - not yet in effect."
-                    notes = f"{draft_prefix} {orig_notes}".strip() if orig_notes else draft_prefix
+                    notes = (
+                        f"{draft_prefix} {orig_notes}".strip()
+                        if orig_notes
+                        else draft_prefix
+                    )
 
-                rows.append({
-                    "price_id":       _price_id(version, category, item),
-                    "version":        version,
-                    "effective_from": effective_from,
-                    "effective_to":   effective_to,
-                    "category":       category,
-                    "item":           item,
-                    "price_low":      price_low,
-                    "price_high":     price_high,
-                    "currency":       "USD",
-                    "is_range":       "TRUE" if is_range else "FALSE",
-                    "notes":          notes,
-                })
+                rows.append(
+                    {
+                        "price_id": _price_id(version, category, item),
+                        "version": version,
+                        "effective_from": effective_from,
+                        "effective_to": effective_to,
+                        "category": category,
+                        "item": item,
+                        "price_low": price_low,
+                        "price_high": price_high,
+                        "currency": "USD",
+                        "is_range": "TRUE" if is_range else "FALSE",
+                        "notes": notes,
+                    }
+                )
+
+    # price_id uniqueness is a CONTRACT: ledger.price_ref must equal price_book.price_id
+    # exactly. Fail loudly rather than silently producing an ambiguous price ref.
+    from collections import Counter
+
+    counts = Counter(r["price_id"] for r in rows)
+    dupes = sorted(pid for pid, n in counts.items() if n > 1)
+    if dupes:
+        raise ValueError(
+            "Duplicate price_id(s) detected — price_ref contract violated:\n"
+            + "\n".join(f"  {pid}" for pid in dupes)
+        )
 
     return rows
 
@@ -211,8 +231,12 @@ def main() -> None:
     ranges_2025 = sum(1 for r in rows_2025 if r["is_range"] == "TRUE")
     ranges_2026 = sum(1 for r in rows_2026 if r["is_range"] == "TRUE")
 
-    print(f"  2025: {len(rows_2025)} rows, {ranges_2025} range items  (effective_from={EFFECTIVE_FROM_2025}, open)")
-    print(f"  2026: {len(rows_2026)} rows, {ranges_2026} range items  (DRAFT — effective_from blank)")
+    print(
+        f"  2025: {len(rows_2025)} rows, {ranges_2025} range items  (effective_from={EFFECTIVE_FROM_2025}, open)"
+    )
+    print(
+        f"  2026: {len(rows_2026)} rows, {ranges_2026} range items  (DRAFT — effective_from blank)"
+    )
 
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_CSV.open("w", newline="", encoding="utf-8") as f:
@@ -221,8 +245,12 @@ def main() -> None:
         writer.writerows(rows)
 
     print(f"\nWrote {len(rows)} rows → {OUTPUT_CSV}")
-    print("Load into the live PriceBook tab via sheets/setup.py or Google Sheets import.")
-    print("To spot-check 2025 values against the PDF, call spot_check() — see docstring.")
+    print(
+        "Load into the live PriceBook tab via sheets/setup.py or Google Sheets import."
+    )
+    print(
+        "To spot-check 2025 values against the PDF, call spot_check() — see docstring."
+    )
 
 
 if __name__ == "__main__":
