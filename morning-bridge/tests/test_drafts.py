@@ -144,6 +144,16 @@ def test_write_allowlist_passes_documents():
     assert result["id"] == "doc-123"
 
 
+def test_create_direct_type305_blocked_at_client_level():
+    """Inner guard: client._create('/documents', {type: 305}) raises
+    without making a network call — independent of drafts.create_proforma."""
+    client = _make_client()
+    with pytest.raises(ValueError, match=r"body\['type'\] must be 300"):
+        client._create("/documents", {"type": 305, "currency": "ILS"})
+    # Verify no network call was made.
+    assert client._http.request.call_count == 0
+
+
 # ── dry-run ───────────────────────────────────────────────────────────────────
 
 
@@ -183,6 +193,23 @@ def test_build_payload_direct_invoice():
     assert line["vat"] == 0.18
     assert "payment" not in payload
     assert "signed" not in payload  # proforma needs no signed flag
+    assert "description" not in payload  # no doc-level description for direct invoices
+
+
+def test_build_payload_with_document_description():
+    """Optional top-level description maps to document.description (agency invoices)."""
+    req = {**_DIRECT_REQUEST, "description": "Acme Corp"}
+    payload = _build_payload(req)
+    assert payload["description"] == "Acme Corp"
+    # Must NOT appear as an income-line field — only at document level.
+    for line in payload["income"]:
+        assert "description" not in line or line["description"] != "Acme Corp"
+
+
+def test_build_payload_without_description_omits_key():
+    """When description is absent from request, document-level key is omitted."""
+    payload = _build_payload(_DIRECT_REQUEST)  # no description key
+    assert "description" not in payload
 
 
 def test_build_payload_agency_invoice():

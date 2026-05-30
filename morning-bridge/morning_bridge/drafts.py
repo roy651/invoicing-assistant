@@ -27,6 +27,11 @@ Input shape (CreateProformaRequest):
   language:          str      "en" | "he"
   currency:          str      "USD" | "ILS"
   vat_rate:          float    e.g. 0.18 for domestic, 0.00 for export
+  description:       str | absent  OPTIONAL.  Document-level heading rendered
+                               on the invoice (morning's top-level "description"
+                               field).  For agency invoices the invoicing skill
+                               sets this to the end_client name; for direct
+                               clients it is omitted entirely.
   lines:             list of:
     description: str
     quantity:    float
@@ -63,13 +68,19 @@ def _build_payload(request: dict) -> dict:
                 "vat": float(request["vat_rate"]),
             }
         )
-    return {
+    payload: dict = {
         "type": _DOC_TYPE_PROFORMA,
         "currency": request["currency"],
         "lang": request["language"],
         "client": {"id": request["bill_to_client_id"]},
         "income": income,
     }
+    # Optional document-level heading (renders bold on the invoice).
+    # For agency invoices this is set to the end_client name by the invoicing
+    # skill (1.7); for direct clients it is omitted.
+    if "description" in request:
+        payload["description"] = request["description"]
+    return payload
 
 
 def _check_double_bill(client: MorningClient, request: dict) -> list[str]:

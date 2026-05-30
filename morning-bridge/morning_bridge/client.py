@@ -134,14 +134,31 @@ class MorningClient:
     # ── restricted write path (used only by drafts.py) ───────────────────────
 
     _WRITE_ALLOWLIST: frozenset[str] = frozenset({"/documents"})
+    _DOC_TYPE_PROFORMA: int = 300  # hard-coded here too — defence in depth
 
     def _create(self, path: str, body: dict) -> dict:
         """
-        Structural write allowlist — only /documents is reachable.
-        Called exclusively by drafts.create_draft; do not call from reads.py or tests.
+        Structural write allowlist — only /documents is reachable, and only
+        with type=300 (Proforma).
+
+        Two independent type-300 guards:
+          1. drafts.create_proforma raises if the caller passes 'type' in the
+             request (outer guard — prevents accidental injection upstream).
+          2. HERE: reject any body whose 'type' != 300 before the network call
+             (inner guard — no code path can POST a non-proforma even if called
+             directly, bypassing drafts.py).
+
+        Called exclusively by drafts.create_proforma; do not call from reads.py.
         """
         if path not in self._WRITE_ALLOWLIST:
             raise ValueError(f"Write path not in allowlist: {path!r}")
+        doc_type = body.get("type")
+        if doc_type != self._DOC_TYPE_PROFORMA:
+            raise ValueError(
+                f"client._create: body['type'] must be {self._DOC_TYPE_PROFORMA} "
+                f"(Proforma) — got {doc_type!r}.  "
+                "Tax invoices and other fiscal documents are structurally blocked."
+            )
         return self._request("POST", path, body)
 
     # ── lifecycle ────────────────────────────────────────────────────────────

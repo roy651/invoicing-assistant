@@ -132,6 +132,27 @@ reconciliation before new proposing starts.
 Settlement uses **only read endpoints** already on the bridge whitelist. It needs no new
 write capability; the drafts-only contract holds.
 
+### Proforma → Invoice linkage (implementation: task 1.9)
+
+The system creates **Proformas** (morning series 40001+, type 300).  When the human
+approves the review packet they convert each proforma to a real Invoice in morning (her
+2XXX series, type 305).  morning automatically links the issued invoice back to its source
+proforma via `linkedDocumentIds`.
+
+Settlement reads the **issued Invoices** as truth (not the proformas).  To match each
+invoice line back to its ledger item:
+
+1. **Primary key** — `morning_doc_ref` on the ledger row stores the *proforma* id.
+   Look up the issued invoice that has the proforma id in its `linkedDocumentIds`.
+2. **Content fallback** — if `linkedDocumentIds` is absent or the proforma was deleted
+   before linking (edge case), match by `bill_to` + `description` heuristic.
+3. **Unmatched issued lines** → orphan path (see above).
+
+The `morning_doc_ref` column should be updated at settlement to the *issued invoice* id
+once found, so subsequent runs can match directly without traversing `linkedDocumentIds`
+again.  The proforma id is retained in a separate `proforma_doc_ref` column (added at 1.9)
+for audit purposes.
+
 ---
 
 ## D. Re-anchoring (no double-processing, nothing lost)

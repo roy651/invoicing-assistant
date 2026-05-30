@@ -185,6 +185,17 @@ conversion is the issuance step and is **out of this system's automated scope**.
   Each opens with a **subtitle line**.
 - If direct: one draft, no subtitle line.
 
+### Document-level description (agencies only)
+
+morning's top-level `description` field renders as a **bold heading** on the
+proforma/invoice — this is how the end-client name appeared as a heading on the
+reference invoices, distinct from the zero-priced subtitle line.
+
+- `is_agency`: the invoicing skill sets `request.description = end_client` (e.g.
+  `"Acme Corp"`) when calling `create_proforma`.
+- Direct clients: `description` is **omitted** from the request; `_build_payload`
+  omits it from the API body.
+
 ### Subtitle line (synthesized — agencies only)
 
 The agency invoices open with a zero-priced header line, observed as:
