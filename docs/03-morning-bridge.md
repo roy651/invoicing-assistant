@@ -1,12 +1,13 @@
 # 03 — morning Bridge (MCP)
 
-A hardened MCP wrapper around the morning (Green Invoice) API. The bridge is defined by
-its **operation whitelist**, enforced in code — not merely by prompt instructions — so a
-confused or adversarial caller physically cannot issue, send, or charge.
+A hardened, importable Python library around the morning (Green Invoice) API. The bridge
+is defined by its **operation whitelist**, enforced structurally — the module simply does
+not define issue/send/payment/etc., so a caller physically cannot invoke them.
 
-Built by stripping a clone of the existing unofficial Green Invoice MCP down to the
-whitelist (verify its license permits this; keep attribution). If its code is not clean,
-write a thin wrapper instead — the contract below is identical either way.
+Built as a plain Python package (`morning-bridge/morning_bridge/`). No MCP server, no HTTP
+transport, no FastAPI — the orchestrator imports the functions directly. If integration
+later requires a model-in-the-loop call path, a ~20-line stdio MCP shim can wrap this same
+library without changing it.
 
 ## Auth
 
@@ -30,15 +31,17 @@ write a thin wrapper instead — the contract below is identical either way.
 | Capability | Constraint |
 | --- | --- |
 | create document **as draft** | Drafts only. morning supports persisted drafts (טיוטה) — confirmed. |
-| delete **own draft** | Only documents the bridge itself created and that are still drafts. |
 
-### Deny — structurally absent (must not exist as callable tools)
+Note: morning has **no document-DELETE API endpoint**. Deleting a draft is a dashboard-only
+action. The bridge has no delete function.
+
+### Deny — structurally absent (must not exist as callable functions)
 
 - Issue / finalize / close a draft into a real (numbered) tax invoice.
 - Send document by email / share.
 - Any payment, clearing, credit-card, or charge endpoint.
 - Create or modify clients, items, expenses, suppliers, webhooks.
-- Delete any document that is not a self-created draft.
+- Any delete function (no API endpoint exists for documents; client/item deletes omitted).
 
 If the upstream MCP exposes these, **remove the tools**, don't just avoid calling them.
 
@@ -83,6 +86,6 @@ does not reason about billing — it validates and creates.
 - Read endpoints return clients/items/documents.
 - create-draft (dry-run) emits a correct payload for: a direct Hebrew/ILS/18% invoice, and
   an agency English/USD/0% invoice with a subtitle line + a partial line + a unit line.
-- create-draft (sandbox, live mode off-by-default) persists a draft and it is visible in the
-  sandbox dashboard; self-created draft can be deleted.
+- create-draft (sandbox, live mode off-by-default) persists a draft (status=Open, no invoice
+  number) and it is visible in the sandbox dashboard.
 - Double-bill guard refuses a duplicate.
