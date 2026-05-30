@@ -1,0 +1,3 @@
+agreement_id,bill_to,end_client,item_desc,agreed_price,currency,agreed_on,source_ref,confidence
+agr-sprig-acme-web-001,SPRIG,ACME,Scrollable website,12000,USD,2025-10-01,email-2025-10-01-quote,confirmed
+agr-sprig-acme-web-002-pending,SPRIG,ACME,Mobile app screens,8000,USD,2026-02-01,email-2026-02-01,detected

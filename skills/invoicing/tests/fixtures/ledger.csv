@@ -1,0 +1,6 @@
+item_id,bill_to,end_client,description,assignee,item_kind,billing_mode,unit_price,currency,price_source,price_ref,total_qty,qty_billed_to_date,last_billed_month,status_agent,completion_evidence,confidence,qty_proposed,status_confirmed,decision,qty_approved,qty_billed_actual,morning_doc_ref,notes
+SPRIG-ACME-web-001,SPRIG,ACME,Scrollable website,self,fixed_quote,partial,12000,USD,negotiated,agr-sprig-acme-web-001,1.0,0.3,2026-01,in_progress,"email-001: client confirmed 70% complete; design phase done",med,0.4,,,,,,2nd payment suggestion
+SPRIG-ACME-rollup-001,SPRIG,ACME,Trade show roll-up,self,unit_based,,400,USD,price_book,2025-trade-rollup,,,,complete,"email-002: ordered 3 roll-ups for March event",high,3,,,,,,
+SPRIG-ACME-unresolved-001,SPRIG,ACME,Custom animation reel,self,fixed_quote,defer,,USD,price_book,2025-web-scrollable-range,1.0,0.0,,not_started,"email-003: project kicked off",low,0,,,,,,Range price not resolved - needs unit_price
+DIRECT-logo-001,DIRECT_IL,,עיצוב לוגו,self,fixed_quote,defer,8000,ILS,price_book,2025-logo-il,1.0,0.0,,complete,"transcript-001: client approved logo in final review call",high,1.0,,,,,,
+MANUAL-001,MANUAL_ONLY,,חשמל,self,unit_based,,500,ILS,price_book,2025-logo-il,,,,complete,"invoice-manual-01",high,1,,,,,,should be excluded - managed_by_agent=FALSE

@@ -22,9 +22,11 @@ testpaths = [
     "morning-bridge/tests",
     "skills/imap-fetch/tests",
     "skills/transcripts/tests",
+    "skills/invoicing/tests",
 ]
 pythonpath = [
     "morning-bridge",
     "skills/imap-fetch",
     "skills/transcripts",
+    "skills/invoicing",
 ]
