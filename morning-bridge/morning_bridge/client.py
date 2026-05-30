@@ -126,6 +126,19 @@ class MorningClient:
     def post(self, path: str, body: dict | None = None) -> dict:
         return self._request("POST", path, body)
 
+    # ── restricted write path (used only by drafts.py) ───────────────────────
+
+    _WRITE_ALLOWLIST: frozenset[str] = frozenset({"/documents"})
+
+    def _create(self, path: str, body: dict) -> dict:
+        """
+        Structural write allowlist — only /documents is reachable.
+        Called exclusively by drafts.create_draft; do not call from reads.py or tests.
+        """
+        if path not in self._WRITE_ALLOWLIST:
+            raise ValueError(f"Write path not in allowlist: {path!r}")
+        return self._request("POST", path, body)
+
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def close(self) -> None:
@@ -151,7 +164,8 @@ def _load_dotenv() -> None:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, _, val = line.partition("=")
-                    os.environ.setdefault(key.strip(), val.strip())
+                    val = val.split("#")[0].strip()  # strip inline comments
+                    os.environ.setdefault(key.strip(), val)
             return
 
 

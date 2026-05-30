@@ -9,6 +9,11 @@ transport, no FastAPI — the orchestrator imports the functions directly. If in
 later requires a model-in-the-loop call path, a ~20-line stdio MCP shim can wrap this same
 library without changing it.
 
+**If the MCP stdio shim is ever built**, it must expose only the functions in `reads.*` and
+`create_draft` — never the generic `MorningClient.get` / `MorningClient.post` methods
+(those accept an arbitrary path and can reach any endpoint). The shim must wrap named
+functions, not the raw HTTP primitives.
+
 ## Auth
 
 - JWT obtained from `POST /account/token` with `{ id, secret }` (the API key pair).
