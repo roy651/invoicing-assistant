@@ -8,7 +8,8 @@ performed by the MODEL in Cowork, not by Python (see "THE MODEL SEAM" below). Th
 harness scaffolds everything around that one step and scores the outcome.
 
 Pipeline:
-  1. INGEST   fixtures/emails (offline .eml/.mbox adapter) + transcripts → unify()
+  1. INGEST   fixtures/emails (offline .eml/.mbox adapter) conditioned exactly as
+              production (dedup → tier → drop bulk/irrelevant) + transcripts → unify()
   2. LOAD     profiles / agreements / price_book / opening ledger from fixtures
   3. SETTLE   reconcile fixtures/invoices into the opening ledger (cycle is settle-first)
   4. REASON   ── THE MODEL SEAM ── a Reasoner fills status_agent/completion_evidence/
@@ -39,8 +40,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from mail_evidence import assemble_threads, ingest_email_export
-from mail_evidence.records import EvidenceRecord
+from mail_evidence import (
+    assemble_threads,
+    classify_tier,
+    condition,
+    dedup_in_thread,
+    ingest_email_export,
+)
+from mail_evidence.records import EvidenceRecord, RelevanceDecision, Thread
 
 from invoicing_rules.evidence import unify
 from invoicing_rules.packet import ReviewPacket, build_review_packet
@@ -71,16 +78,28 @@ class FixtureSet:
     invoices: Path
     transcripts: Path | None
     client_profiles: Path
-    agreements: Path
+    agreements: Path | None
     price_book: Path
-    opening_ledger: Path
+    opening_ledger: Path | None
     expected_ledger: Path
     annotations: Path
     open_proformas: Path | None
 
 
+# Inputs a real run can't proceed without: the mailbox to read, who to bill,
+# and how to price. Everything else may be absent on a cold start (no prior
+# agreements, a blank opening ledger, no live proformas yet).
+_REQUIRED_INPUTS = ("emails", "client_profiles.csv", "price_book.csv")
+
+
 def discover_fixtures(root: str | Path) -> FixtureSet:
     root = Path(root)
+
+    missing = [name for name in _REQUIRED_INPUTS if not (root / name).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"fixture root {root} is missing required input(s): {', '.join(missing)}"
+        )
 
     def opt(p: Path) -> Path | None:
         return p if p.exists() else None
@@ -91,23 +110,84 @@ def discover_fixtures(root: str | Path) -> FixtureSet:
         invoices=root / "invoices",
         transcripts=opt(root / "transcripts"),
         client_profiles=root / "client_profiles.csv",
-        agreements=root / "agreements.csv",
+        agreements=opt(root / "agreements.csv"),
         price_book=root / "price_book.csv",
-        opening_ledger=root / "opening_ledger.csv",
+        opening_ledger=opt(root / "opening_ledger.csv"),
         expected_ledger=root / "expected_ledger.csv",
         annotations=root / "agent_annotations.csv",
         open_proformas=opt(root / "open_proformas.json"),
     )
 
 
-def ingest_evidence(fx: FixtureSet) -> list[EvidenceRecord]:
-    """Deliverable A + transcripts → one unified, date-sorted evidence list."""
+class _KeepAllJudge:
+    """
+    Harness default RelevanceJudge: keep every T2 (unknown-but-human) thread, so the
+    reasoning seam — not a heuristic — decides what is work. This is the conservative
+    direction for a go/no-go: it never drops a thread the oracle might expect to bill.
+    Bulk (T3) threads are already dropped by tiering before this runs. Injectable —
+    production swaps in the model-backed judge.
+    """
+
+    def is_relevant(self, thread: Thread) -> RelevanceDecision:
+        return RelevanceDecision(
+            relevant=True,
+            reason="harness default: keep all human threads",
+            promote_emails=[],
+        )
+
+
+class _FixtureContactStore:
+    """
+    Harness default ContactStore: empty allowlist. By the tiering inversion invariant
+    (§6.1) an empty store only ever costs an extra T2 judgment — never a dropped
+    thread — so no real client thread is lost; pure-bulk threads still drop as T3.
+    `add_auto` records promotions in memory only; the harness persists nothing.
+    """
+
+    def __init__(self) -> None:
+        self._known: dict[str, str] = {}
+
+    def is_known(self, email: str) -> bool:
+        return email.lower() in self._known
+
+    def role_of(self, email: str) -> str | None:
+        return self._known.get(email.lower())
+
+    def add_auto(self, email: str, reason: str) -> None:
+        self._known.setdefault(email.lower(), "other")
+
+
+def ingest_evidence(
+    fx: FixtureSet,
+    *,
+    judge: object | None = None,
+    contact_store: object | None = None,
+) -> list[EvidenceRecord]:
+    """
+    Deliverable A + transcripts → one unified, date-sorted evidence list.
+
+    Mirrors the production pipeline (mail_evidence.run): after assembly, each thread is
+    deduped → tiered → conditioned, so bulk/marketing (T3) and judged-irrelevant (T2)
+    threads are dropped here instead of reaching the reasoning seam. Judge and contact
+    store are injectable; the fixture defaults keep all human threads and drop only
+    deterministic bulk.
+    """
+    judge = judge or _KeepAllJudge()
+    contact_store = contact_store or _FixtureContactStore()
+
     records = ingest_email_export(fx.emails) if fx.emails.exists() else []
-    threads = assemble_threads(records)
+    conditioned: list[Thread] = []
+    for thread in assemble_threads(records):
+        thread = dedup_in_thread(thread)
+        thread = classify_tier(thread, contact_store)
+        kept = condition(thread, judge, contact_store)
+        if kept is not None:
+            conditioned.append(kept)
+
     transcripts: list[EvidenceRecord] = []
     if fx.transcripts and _read_transcripts is not None:
         transcripts = _read_transcripts(fx.transcripts)
-    return unify(threads, transcripts)
+    return unify(conditioned, transcripts)
 
 
 def load_invoices(fx: FixtureSet) -> list[dict]:
@@ -330,15 +410,20 @@ def score(
 
 
 def run_harness(
-    fx: FixtureSet, reasoner: Reasoner, *, billing_month: str
+    fx: FixtureSet,
+    reasoner: Reasoner,
+    *,
+    billing_month: str,
+    judge: object | None = None,
+    contact_store: object | None = None,
 ) -> Phase2Report:
     profiles = load_client_profiles(fx.client_profiles)
     price_book = load_price_book(fx.price_book)
-    agreements = load_agreements(fx.agreements)
-    ledger = load_ledger(fx.opening_ledger)
+    agreements = load_agreements(fx.agreements) if fx.agreements else []
+    ledger = load_ledger(fx.opening_ledger) if fx.opening_ledger else []
     expected = load_ledger(fx.expected_ledger)
 
-    evidence = ingest_evidence(fx)
+    evidence = ingest_evidence(fx, judge=judge, contact_store=contact_store)
     invoices = load_invoices(fx)
     live = load_open_proformas(fx)
 

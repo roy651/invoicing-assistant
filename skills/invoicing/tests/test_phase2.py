@@ -6,7 +6,10 @@ settlement reconciliation, the model seam), the no-auto-bill guard, and the scor
 ability to CATCH each metric violation.
 """
 
+import shutil
 from pathlib import Path
+
+import pytest
 
 from invoicing_rules.packet import (
     BillToGroup,
@@ -142,11 +145,22 @@ def test_harness_settles_pending_proforma():
 
 def test_ingest_evidence_unifies_cross_folder_thread():
     evidence = ingest_evidence(_fx())
-    # The INBOX parent and the Sent reply share one thread_id.
-    assert len(evidence) == 2
-    assert len({e.thread_id for e in evidence}) == 1
+    # The INBOX parent and the Sent reply share one thread_id (the bulk marketing
+    # email is a separate thread, dropped by tiering — see the next test).
+    work = [e for e in evidence if e.source == "email"]
+    assert len(work) == 2
+    assert len({e.thread_id for e in work}) == 1
     # CC (the subcontractor signal) survived ingestion.
-    assert all("sub@studio.com" in e.cc for e in evidence)
+    assert all("sub@studio.com" in e.cc for e in work)
+
+
+def test_ingest_evidence_drops_bulk_marketing():
+    """A raw mailbox carries marketing; tiering must drop it (T3) before reasoning,
+    mirroring production conditioning — not pass it to the reasoning seam."""
+    evidence = ingest_evidence(_fx())
+    froms = {e.from_ for e in evidence if e.from_}
+    assert "promo@newsletter.example.com" not in froms
+    assert not any("marketing-1" in e.id for e in evidence)
 
 
 # ── the no-auto-bill guard trips on a misbehaving reasoner ───────────────────
@@ -218,3 +232,38 @@ def test_score_catches_grouping_mismatch():
     report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
     m = next(m for m in report.metrics if m.name == "grouping")
     assert m.passed is False
+
+
+# ── fixture discovery tolerance (cold-start) ─────────────────────────────────
+
+
+def test_discover_fixtures_requires_core_inputs(tmp_path):
+    # Only emails/ present — client_profiles + price_book missing → clear error.
+    (tmp_path / "emails").mkdir()
+    with pytest.raises(FileNotFoundError, match="client_profiles.csv"):
+        discover_fixtures(tmp_path)
+
+
+def test_discover_fixtures_optionals_absent_on_cold_start(tmp_path):
+    # A cold-start root: required inputs only, no agreements / opening ledger /
+    # open proformas. discover_fixtures tolerates them and the harness runs.
+    src = _FIXTURES
+    (tmp_path / "emails" / "INBOX").mkdir(parents=True)
+    shutil.copytree(src / "emails", tmp_path / "emails", dirs_exist_ok=True)
+    for name in ("client_profiles.csv", "price_book.csv", "expected_ledger.csv"):
+        shutil.copy(src / name, tmp_path / name)
+
+    fx = discover_fixtures(tmp_path)
+    assert fx.agreements is None
+    assert fx.opening_ledger is None
+    assert fx.open_proformas is None
+
+    # No annotations file either → empty reasoner; harness still produces a report.
+    report = run_harness(fx, ReplayReasoner(fx.annotations), billing_month=_MONTH)
+    assert {m.name for m in report.metrics} == {
+        "grouping",
+        "price_on_resolved",
+        "item_precision_recall",
+        "no_false_complete",
+        "no_auto_bill",
+    }
