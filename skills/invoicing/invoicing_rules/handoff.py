@@ -27,11 +27,20 @@ Safety invariants enforced here:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from invoicing_rules.packet import annotate_description
 from invoicing_rules.pricing import resolve_all
-from invoicing_rules.state import Agreement, ClientProfile, LedgerItem, PriceBookRow
+from invoicing_rules.state import (
+    Agreement,
+    ClientProfile,
+    LedgerItem,
+    PriceBookRow,
+    write_ledger,
+)
+from morning_bridge.drafts import create_proforma
 
 # Decisions that result in a billed line. "defer"/"hold" are not billed.
 _BILLABLE_DECISIONS = {"bill", "partial"}
@@ -202,12 +211,51 @@ def apply_results(
     return updated
 
 
+def create_and_record(
+    client: object,
+    requests: list[ProformaRequest],
+    ledger: list[LedgerItem],
+    ledger_path: str | Path,
+    *,
+    create_fn: Callable[[object, dict], dict] = create_proforma,
+) -> list[dict]:
+    """
+    Create each proforma, record its id, and persist the ledger — one request at a
+    time, in that order — BEFORE moving to the next request.
+
+    Interleaving create → record → write_ledger per request (instead of creating the
+    whole batch then recording it) shrinks the dual-write crash window from the whole
+    batch to a single proforma: if the process dies mid-run, at most one created
+    proforma is missing its `morning_doc_ref` on disk (recoverable by checking
+    morning), rather than several.
+
+    NOT idempotent across separate CREATE runs. Re-running this on the same approved
+    ledger creates DUPLICATE proformas — morning has no API delete (dashboard cleanup
+    only). Full within-cycle idempotency (skip items already carrying this cycle's
+    proforma_doc_ref) lands in 1.9; until then, never re-run CREATE within a cycle.
+
+    `create_fn` is injectable for testing; it defaults to the bridge's create_proforma
+    (which honours DRY_RUN). Returns the per-request results in order.
+    """
+    results: list[dict] = []
+    for request in requests:
+        result = create_fn(client, request.to_bridge_request())
+        apply_results(ledger, request, result)
+        write_ledger(ledger, ledger_path)
+        results.append(result)
+    return results
+
+
 # ── internal ──────────────────────────────────────────────────────────────────
 
 
 def _is_billable(item: LedgerItem, profiles: dict[str, ClientProfile]) -> bool:
     profile = profiles.get(item.bill_to)
     if profile is None or not profile.managed_by_agent:
+        return False
+    # The gate writes status_confirmed + decision + qty_approved together; require
+    # status_confirmed so a half-written gate row is never billed.
+    if not item.status_confirmed:
         return False
     if item.decision not in _BILLABLE_DECISIONS:
         return False

@@ -15,6 +15,7 @@ import pytest
 from invoicing_rules.handoff import (
     apply_results,
     build_proforma_requests,
+    create_and_record,
 )
 from invoicing_rules.state import (
     ClientProfile,
@@ -248,6 +249,17 @@ def test_zero_or_missing_qty_approved_excluded(qty):
     assert reqs == []
 
 
+@pytest.mark.parametrize("status", [None, ""])
+def test_missing_status_confirmed_excluded(status):
+    """Defensive: a billable decision without status_confirmed is a half-written gate
+    row and must not be billed."""
+    profiles, pb, agrs = _refs()
+    item = _rollup_units()
+    item.status_confirmed = status
+    reqs = build_proforma_requests([item], profiles, pb, agrs, _MONTH)
+    assert reqs == []
+
+
 # ── blockers: never invent a price; never bill without a morning client ──────
 
 
@@ -371,3 +383,78 @@ def test_write_ledger_persists_morning_doc_ref(tmp_path):
     assert reloaded["SPRIG-ACME-web-001"].qty_approved == 0.4
     assert reloaded["SPRIG-ACME-web-001"].price_ref == "agr-sprig-acme-web-001"
     assert reloaded["DIRECT-logo-001"].currency == "ILS"
+
+
+# ── create_and_record: interleaved create → record → persist ─────────────────
+
+
+def test_create_and_record_persists_each_proforma(tmp_path):
+    profiles, pb, agrs = _refs()
+    # Two end-clients → two proformas (ACME, BETA), sorted by end_client.
+    beta = _item(
+        "SPRIG-BETA-001",
+        "SPRIG",
+        end_client="BETA",
+        description="Banner set",
+        price_ref="2025-trade-rollup",
+        qty_approved=2.0,
+    )
+    ledger = [_web_partial(), beta]
+    reqs = build_proforma_requests(ledger, profiles, pb, agrs, _MONTH)
+    out = tmp_path / "ledger.csv"
+
+    def fake_create(_client, bridge_req):
+        # id derived from the document heading (end_client) for traceability.
+        return {"id": f"doc-{bridge_req['description']}", "type": 300}
+
+    results = create_and_record(None, reqs, ledger, out, create_fn=fake_create)
+
+    assert len(results) == 2
+    reloaded = {it.item_id: it for it in load_ledger(out)}
+    assert reloaded["SPRIG-ACME-web-001"].morning_doc_ref == "doc-ACME"
+    assert reloaded["SPRIG-BETA-001"].morning_doc_ref == "doc-BETA"
+
+
+def test_create_and_record_persists_before_next_request(tmp_path):
+    """The first proforma's id must be on disk before the second is created —
+    proving the dual-write window is one proforma, not the whole batch."""
+    profiles, pb, agrs = _refs()
+    beta = _item(
+        "SPRIG-BETA-001",
+        "SPRIG",
+        end_client="BETA",
+        description="Banner set",
+        price_ref="2025-trade-rollup",
+        qty_approved=2.0,
+    )
+    ledger = [_web_partial(), beta]
+    reqs = build_proforma_requests(ledger, profiles, pb, agrs, _MONTH)
+    out = tmp_path / "ledger.csv"
+
+    calls = []
+
+    def spy_create(_client, bridge_req):
+        calls.append(bridge_req["description"])
+        if bridge_req["description"] == "BETA":
+            # By the time BETA is created, ACME must already be persisted.
+            persisted = {it.item_id: it for it in load_ledger(out)}
+            assert persisted["SPRIG-ACME-web-001"].morning_doc_ref == "doc-ACME"
+        return {"id": f"doc-{bridge_req['description']}", "type": 300}
+
+    create_and_record(None, reqs, ledger, out, create_fn=spy_create)
+    assert calls == ["ACME", "BETA"]  # ordered, ACME first
+
+
+def test_create_and_record_dry_run_records_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "true")
+    profiles, pb, agrs = _refs()
+    ledger = [_logo_direct()]
+    reqs = build_proforma_requests(ledger, profiles, pb, agrs, _MONTH)
+    out = tmp_path / "ledger.csv"
+
+    results = create_and_record(None, reqs, ledger, out, create_fn=create_proforma)
+
+    assert results[0]["dry_run"] is True
+    # Nothing real was created → no morning_doc_ref recorded, on disk or in memory.
+    assert ledger[0].morning_doc_ref is None
+    assert load_ledger(out)[0].morning_doc_ref is None

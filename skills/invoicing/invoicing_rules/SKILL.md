@@ -192,28 +192,38 @@ quantities, adds items, and writes the gate columns on the ledger:
 `qty_approved`. **Never write those yourself** (invariant 3). Nothing past this
 point runs without the user's explicit go-ahead in the session.
 
-## Step 6 — CREATE (only after explicit approval)
+## Steps 6–7 — CREATE + RECORD (only after explicit approval)
 
-Turn the gate-approved ledger rows into morning proforma requests and create them:
+Build the requests, then create-and-record them in one interleaved call that also
+performs RECORD (step 9): for each proforma it creates, writes the returned id onto
+the ledger, and persists — before creating the next one.
 
 ```python
-from invoicing_rules import build_proforma_requests
+from invoicing_rules import build_proforma_requests, create_and_record
 from morning_bridge.drafts import create_proforma
 
 requests = build_proforma_requests(
     ledger, profiles, price_book, agreements, billing_month
 )
-results = [create_proforma(client, r.to_bridge_request()) for r in requests]
+results = create_and_record(
+    client, requests, ledger, ledger_csv, create_fn=create_proforma
+)
 ```
 
-`build_proforma_requests` selects only managed, gate-approved items (`decision` in
-{`bill`, `partial`}, `qty_approved > 0`), groups them per `docs/01 §5` — one
-proforma per end-client for agencies (each with the zero-priced subtitle line and
-the end-client name as the document heading), one plain proforma for direct
-clients — prices every line, and annotates partial fixed-quotes from
-**`qty_approved`** (not the original proposal). It **raises**, listing every
-offender, if any approved item has no resolvable price or no `morning_client_id` —
-never guess a price, never half-build a batch.
+`build_proforma_requests` selects only managed, gate-approved items
+(`status_confirmed` set, `decision` in {`bill`, `partial`}, `qty_approved > 0`),
+groups them per `docs/01 §5` — one proforma per end-client for agencies (each with
+the zero-priced subtitle line and the end-client name as the document heading), one
+plain proforma for direct clients — prices every line, and annotates partial
+fixed-quotes from **`qty_approved`** (not the original proposal). It **raises**,
+listing every offender, if any approved item has no resolvable price or no
+`morning_client_id` — never guess a price, never half-build a batch.
+
+`create_and_record` is the RECORD step (docs/05 step 9): it writes each proforma id
+to `morning_doc_ref` (settlement later overwrites it with the issued-invoice id) and
+leaves `qty_billed_actual` empty — **only next cycle's settlement fills that, from
+the *issued* document** (morning is truth; never accumulate `qty_billed_to_date` from
+a proposal or an approval).
 
 Hard limits that still hold here:
 - **Proformas only.** `create_proforma` hard-locks `type=300`; it is structurally
@@ -222,26 +232,14 @@ Hard limits that still hold here:
 - **Dry-run by default.** With `DRY_RUN=true` the bridge returns the payload and
   makes no network call — use it to show the user exactly what would be created
   before anything touches morning.
+- **⚠️ CREATE is not yet idempotent. Never re-run it within a cycle.** Re-running
+  on the same approved ledger creates **duplicate proformas**, and morning has **no
+  API delete** (dashboard cleanup only). If a run is interrupted, check morning for
+  what was already created before retrying — `create_and_record` persists after each
+  proforma, so at most one created proforma can be missing its `morning_doc_ref` on
+  disk. Within-cycle idempotency (skip items already carrying this cycle's
+  `proforma_doc_ref`) lands in 1.9.
 - Never call any issue / send / close / delete endpoint (the bridge has none).
-
-## Step 7 — RECORD
-
-For each created proforma, record its id onto the ledger rows it covers, then
-persist:
-
-```python
-from invoicing_rules import apply_results, write_ledger
-
-for request, result in zip(requests, results):
-    apply_results(ledger, request, result)
-write_ledger(ledger, ledger_csv)
-```
-
-`apply_results` writes the proforma id to `morning_doc_ref` (settlement later
-overwrites it with the issued-invoice id). It leaves `qty_billed_actual` empty —
-**only next cycle's settlement fills that, from the *issued* document** (morning is
-truth; never accumulate `qty_billed_to_date` from a proposal or an approval).
-Dry-run results carry no id and record nothing.
 
 ## Never
 

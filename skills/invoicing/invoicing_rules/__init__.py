@@ -13,6 +13,7 @@ from invoicing_rules.handoff import (
     ProformaRequest,
     apply_results,
     build_proforma_requests,
+    create_and_record,
 )
 from invoicing_rules.packet import (
     BillToGroup,
@@ -63,4 +64,5 @@ __all__ = [
     "build_proforma_requests",
     "ProformaRequest",
     "apply_results",
+    "create_and_record",
 ]
