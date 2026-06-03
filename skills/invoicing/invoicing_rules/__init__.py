@@ -8,12 +8,7 @@ Deterministic Python helpers for the monthly forward pass:
   packet    — build the grouped review packet for the human gate
 """
 
-from invoicing_rules.evidence import (
-    SOURCE_EMAIL,
-    SOURCE_TRANSCRIPT,
-    UnifiedEvidence,
-    unify,
-)
+from invoicing_rules.evidence import unify
 from invoicing_rules.packet import (
     BillToGroup,
     EndClientGroup,
@@ -36,10 +31,7 @@ from invoicing_rules.state import (
 
 __all__ = [
     # evidence
-    "UnifiedEvidence",
     "unify",
-    "SOURCE_EMAIL",
-    "SOURCE_TRANSCRIPT",
     # state
     "ClientProfile",
     "Agreement",

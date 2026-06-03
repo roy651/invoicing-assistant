@@ -9,7 +9,7 @@ Public API:
   EvidenceRecord    shared evidence shape (used for both email and transcripts)
 
 Why a shared shape:
-  The invoicing rules skill (docs/05) consumes email (via imap-fetch) and
+  The invoicing rules skill (docs/05) consumes email (via mail-evidence) and
   transcripts through a single reasoning pass.  Using one evidence type means
   1.7 never needs to branch on source type for the match/infer steps.
 

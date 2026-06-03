@@ -54,19 +54,22 @@ rules below. Do not re-derive schema or algorithm from memory — the helpers an
 
 Gather the period's evidence and the open ledger.
 
-1. Fetch email (IMAP skill) and transcripts (transcripts reader) for the billing
-   month.
-2. Unify them into one chronologically ordered list:
+1. Fetch and condition email with **mail-evidence** (`run()` →
+   fetch INBOX+Sent → assemble References-chain threads → dedup → tier T1/T2/T3 →
+   drop bulk/irrelevant) and read transcripts with the transcripts reader. Both
+   yield `mail_evidence.EvidenceRecord`s — email grouped in `Thread`s, transcripts
+   as a flat list.
+2. Flatten them into one chronologically ordered evidence list:
 
    ```python
    from invoicing_rules import unify
-   evidence = unify(messages, transcripts)   # list[UnifiedEvidence], sorted by date
+   evidence = unify(threads, transcripts)   # list[EvidenceRecord], sorted by date
    ```
 
-   `unify` preserves email `from_`/`to`/`cc`/`subject` as first-class fields and
-   transcript `participants`/`filename` separately — it does **not** collapse them.
-   You will read `cc` directly in MATCH/INFER for the subcontractor signal, so do
-   not flatten it yourself.
+   Every record keeps its `source`, `thread_id`, and first-class
+   `from_`/`to`/`cc`/`subject` (email) or `participants`/`filename` (transcript) —
+   `unify` does **not** collapse them. You will read `cc` directly in MATCH/INFER
+   for the subcontractor signal, so do not flatten it yourself.
 3. Load state from the CSV exports:
 
    ```python
@@ -92,7 +95,7 @@ item. This is your judgment, constrained by:
   ambiguity, `confidence` reflects it) — do not pick silently.
 - **Respect `assignee`.** For items whose `assignee` is a subcontractor (not
   `self`), the relevant completion signal is the **end client confirming on a
-  thread the subcontractor is CC'd on**. Read `UnifiedEvidence.cc` to detect this.
+  thread the subcontractor is CC'd on**. Read `EvidenceRecord.cc` to detect this.
   A subcontractor's own claim of completion is weaker than the client's CC'd
   acknowledgement.
 - **New items** are allowed only with evidence behind them (invariant 1) and a
