@@ -179,6 +179,36 @@ class LedgerItem:
     notes: str | None = field(default=None)
 
 
+# Ledger CSV column order — mirrors sheets/schema.py LEDGER exactly so a written
+# ledger round-trips through load_ledger and the future Sheets connector.
+LEDGER_COLUMNS = [
+    "item_id",
+    "bill_to",
+    "end_client",
+    "description",
+    "assignee",
+    "item_kind",
+    "billing_mode",
+    "unit_price",
+    "currency",
+    "price_source",
+    "price_ref",
+    "total_qty",
+    "qty_billed_to_date",
+    "last_billed_month",
+    "status_agent",
+    "completion_evidence",
+    "confidence",
+    "qty_proposed",
+    "status_confirmed",
+    "decision",
+    "qty_approved",
+    "qty_billed_actual",
+    "morning_doc_ref",
+    "notes",
+]
+
+
 def load_ledger(path: str | Path) -> list[LedgerItem]:
     rows = _read_csv(Path(path))
     out: list[LedgerItem] = []
@@ -215,6 +245,55 @@ def load_ledger(path: str | Path) -> list[LedgerItem]:
             )
         )
     return out
+
+
+def write_ledger(ledger: list[LedgerItem], path: str | Path) -> None:
+    """
+    Persist the ledger back to CSV in the canonical column order.
+
+    Counterpart to load_ledger; the future Sheets connector writes the same shape.
+    Empty/None cells are written as "" so a re-load yields None again.
+    """
+
+    def _cell(v: object) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        return str(v)
+
+    with Path(path).open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=LEDGER_COLUMNS)
+        writer.writeheader()
+        for item in ledger:
+            writer.writerow(
+                {
+                    "item_id": _cell(item.item_id),
+                    "bill_to": _cell(item.bill_to),
+                    "end_client": _cell(item.end_client),
+                    "description": _cell(item.description),
+                    "assignee": _cell(item.assignee),
+                    "item_kind": _cell(item.item_kind),
+                    "billing_mode": _cell(item.billing_mode),
+                    "unit_price": _cell(item.unit_price),
+                    "currency": _cell(item.currency),
+                    "price_source": _cell(item.price_source),
+                    "price_ref": _cell(item.price_ref),
+                    "total_qty": _cell(item.total_qty),
+                    "qty_billed_to_date": _cell(item.qty_billed_to_date),
+                    "last_billed_month": _cell(item.last_billed_month),
+                    "status_agent": _cell(item.status_agent),
+                    "completion_evidence": _cell(item.completion_evidence),
+                    "confidence": _cell(item.confidence),
+                    "qty_proposed": _cell(item.qty_proposed),
+                    "status_confirmed": _cell(item.status_confirmed),
+                    "decision": _cell(item.decision),
+                    "qty_approved": _cell(item.qty_approved),
+                    "qty_billed_actual": _cell(item.qty_billed_actual),
+                    "morning_doc_ref": _cell(item.morning_doc_ref),
+                    "notes": _cell(item.notes),
+                }
+            )
 
 
 # ── PriceBookRow ──────────────────────────────────────────────────────────────

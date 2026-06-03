@@ -4,7 +4,8 @@ description: >-
   Run the monthly forward pass for a freelancer's billing: read email +
   transcripts, match them to open ledger items, infer what was completed and how
   much to bill, resolve prices, and emit a grouped review packet for a human to
-  approve. Proposes only — never issues, never bills. Use when starting the
+  approve. Only on explicit approval does it prepare draft proformas (never tax
+  invoices) and record them. Never issues, never bills. Use when starting the
   monthly invoicing review for a billing month.
 ---
 
@@ -14,11 +15,13 @@ You run the reasoning core of the invoicing system. You read the freelancer's
 evidence for a billing month, decide which work items advanced and by how much,
 price them, and present a **review packet** for the human gate.
 
-You **stop at the packet.** You never create a draft, never settle, never write
-to the ledger. Those are downstream steps (gate → create → record) owned by
-other tasks. Your output is a proposal a human reviews.
+You **stop at the packet for the human to decide.** Only after their explicit
+approval do you prepare **draft proformas** (the morning bridge can only create
+non-fiscal Proformas, never tax invoices) and record the result. You never issue,
+never bill, never settle — settlement is a separate skill.
 
-The cycle is deterministic in order: **SCAN → MATCH → INFER → PRICE → PROPOSE.**
+The forward pass is deterministic in order: **SCAN → MATCH → INFER → PRICE →
+PROPOSE.** Then the human gate decides; on approval you run **CREATE → RECORD.**
 At each mechanical step you call the existing Python helpers in
 `invoicing_rules`; the *reasoning* (MATCH, INFER) is yours, but it must obey the
 rules below. Do not re-derive schema or algorithm from memory — the helpers and
@@ -176,16 +179,73 @@ partial-fixed-quote descriptions with progress, and sorts so the lines needing
 human judgment come first.
 
 Present the packet to the user grouped as built, leading with the flagged lines.
-Make clear it is a **proposal**: their edits are the authority. Then **stop.**
+Make clear it is a **proposal**: their edits are the authority. Then **stop and
+wait for the gate.**
 
 ---
 
-## Stop condition
+## The human gate — the hard stop for *deciding*
 
-You are done when the review packet is presented. Do **not**:
+You do not decide what bills. The human reviews the packet, trims, edits
+quantities, adds items, and writes the gate columns on the ledger:
+`status_confirmed`, `decision` (`bill` | `partial` | `defer` | `hold`), and
+`qty_approved`. **Never write those yourself** (invariant 3). Nothing past this
+point runs without the user's explicit go-ahead in the session.
 
-- create proformas or drafts (downstream: gate → create),
-- write `status_confirmed` / `decision` / `qty_approved` or any approval,
-- settle against morning or modify the ledger on disk.
+## Step 6 — CREATE (only after explicit approval)
 
-Wait for the human gate.
+Turn the gate-approved ledger rows into morning proforma requests and create them:
+
+```python
+from invoicing_rules import build_proforma_requests
+from morning_bridge.drafts import create_proforma
+
+requests = build_proforma_requests(
+    ledger, profiles, price_book, agreements, billing_month
+)
+results = [create_proforma(client, r.to_bridge_request()) for r in requests]
+```
+
+`build_proforma_requests` selects only managed, gate-approved items (`decision` in
+{`bill`, `partial`}, `qty_approved > 0`), groups them per `docs/01 §5` — one
+proforma per end-client for agencies (each with the zero-priced subtitle line and
+the end-client name as the document heading), one plain proforma for direct
+clients — prices every line, and annotates partial fixed-quotes from
+**`qty_approved`** (not the original proposal). It **raises**, listing every
+offender, if any approved item has no resolvable price or no `morning_client_id` —
+never guess a price, never half-build a batch.
+
+Hard limits that still hold here:
+- **Proformas only.** `create_proforma` hard-locks `type=300`; it is structurally
+  incapable of issuing a tax invoice. Issuance = the human converting a proforma
+  inside morning, out of this system's scope.
+- **Dry-run by default.** With `DRY_RUN=true` the bridge returns the payload and
+  makes no network call — use it to show the user exactly what would be created
+  before anything touches morning.
+- Never call any issue / send / close / delete endpoint (the bridge has none).
+
+## Step 7 — RECORD
+
+For each created proforma, record its id onto the ledger rows it covers, then
+persist:
+
+```python
+from invoicing_rules import apply_results, write_ledger
+
+for request, result in zip(requests, results):
+    apply_results(ledger, request, result)
+write_ledger(ledger, ledger_csv)
+```
+
+`apply_results` writes the proforma id to `morning_doc_ref` (settlement later
+overwrites it with the issued-invoice id). It leaves `qty_billed_actual` empty —
+**only next cycle's settlement fills that, from the *issued* document** (morning is
+truth; never accumulate `qty_billed_to_date` from a proposal or an approval).
+Dry-run results carry no id and record nothing.
+
+## Never
+
+- Issue, send, close, or email any document.
+- Set `status_confirmed` / `decision` / `qty_approved` — those are the gate's.
+- Accumulate `qty_billed_to_date` from anything but a settled, issued document.
+- Settle against morning (that is the separate settlement skill).

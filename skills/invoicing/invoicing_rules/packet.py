@@ -178,7 +178,7 @@ def _is_managed(item: LedgerItem, profiles: dict[str, ClientProfile]) -> bool:
 
 def _build_line(item: LedgerItem, pr: PriceResult) -> ProposedLine:
     qty = item.qty_proposed or 0.0
-    description = _annotated_description(item)
+    description = annotate_description(item, qty)
     unit_price = pr.unit_price
     line_total = round(qty * unit_price, 2) if unit_price is not None else None
 
@@ -236,12 +236,17 @@ def _build_line(item: LedgerItem, pr: PriceResult) -> ProposedLine:
     )
 
 
-def _annotated_description(item: LedgerItem) -> str:
+def annotate_description(item: LedgerItem, this_qty: float) -> str:
     """
-    Append a progress annotation for partial fixed_quote items.
+    Append a progress annotation for partial fixed_quote items, using `this_qty`
+    as the amount billed/proposed in THIS document.
 
     Format: "<description> - <ordinal> payment (<cumulative>% so far)"
     or      "<description> - <ordinal> and final payment"
+
+    Shared by the review packet (this_qty = qty_proposed) and the create handoff
+    (this_qty = qty_approved), so the proforma's progress note reflects the
+    quantity actually approved, not the original proposal.
 
     Ordinal: "1st" if nothing billed yet, otherwise generic "next" — we cannot
     determine the exact payment number from qty_billed_to_date alone (it is a
@@ -254,10 +259,9 @@ def _annotated_description(item: LedgerItem) -> str:
 
     total = item.total_qty or 1.0
     prior = item.qty_billed_to_date or 0.0
-    proposed = item.qty_proposed or 0.0
 
-    cumulative_pct = math.floor((prior + proposed) / total * 100)
-    is_final = (prior + proposed) >= total
+    cumulative_pct = math.floor((prior + this_qty) / total * 100)
+    is_final = (prior + this_qty) >= total
 
     ordinal = "1st" if _is_approx_zero(prior) else "next"
 

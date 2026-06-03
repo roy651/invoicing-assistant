@@ -9,6 +9,11 @@ Deterministic Python helpers for the monthly forward pass:
 """
 
 from invoicing_rules.evidence import unify
+from invoicing_rules.handoff import (
+    ProformaRequest,
+    apply_results,
+    build_proforma_requests,
+)
 from invoicing_rules.packet import (
     BillToGroup,
     EndClientGroup,
@@ -27,6 +32,7 @@ from invoicing_rules.state import (
     load_client_profiles,
     load_ledger,
     load_price_book,
+    write_ledger,
 )
 
 __all__ = [
@@ -41,6 +47,7 @@ __all__ = [
     "load_agreements",
     "load_ledger",
     "load_price_book",
+    "write_ledger",
     # pricing
     "PriceResult",
     "resolve_price",
@@ -52,4 +59,8 @@ __all__ = [
     "ProposedLine",
     "Flag",
     "build_review_packet",
+    # handoff (gate → create_proforma + record)
+    "build_proforma_requests",
+    "ProformaRequest",
+    "apply_results",
 ]
