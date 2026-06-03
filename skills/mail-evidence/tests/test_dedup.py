@@ -38,16 +38,31 @@ def _make_thread(*bodies: str) -> Thread:
 
 
 def test_in_thread_reply_quote_stripped():
-    """A >-prefixed quote matching a sibling body is removed."""
+    """A substantial >-prefixed quote matching a sibling body is removed."""
+    original = (
+        "The scrollable website design is approved and ready for invoicing this month."
+    )
     t = _make_thread(
-        "Hello world",  # record 0
-        "> Hello world\n\nI agree",  # record 1 quotes record 0
+        original,  # record 0
+        f"> {original}\n\nI agree, sending it over.",  # record 1 quotes record 0
     )
     result = dedup_in_thread(t)
-    assert result.records[0].body_text == "Hello world"  # record 0 unchanged
+    assert result.records[0].body_text == original  # record 0 unchanged
     reply_body = result.records[1].body_text
-    assert "I agree" in reply_body
-    assert "> Hello world" not in reply_body
+    assert "I agree, sending it over." in reply_body
+    assert original not in reply_body
+
+
+def test_short_quote_kept_even_if_in_sibling():
+    """A short quoted block (< min tokens) is never stripped, even when it matches a
+    sibling — it could coincide by chance, and losing it from a forward is evidence
+    loss (§6.4). Bias is toward keeping."""
+    t = _make_thread(
+        "Thanks, approved.",  # record 0
+        "> Thanks, approved.\n\nForwarding this for your records.",  # record 1
+    )
+    result = dedup_in_thread(t)
+    assert "> Thanks, approved." in result.records[1].body_text
 
 
 # ── AC#3 test 2 — forwarded external quote preserved ─────────────────────────
@@ -103,14 +118,15 @@ def test_single_record_thread_unchanged():
 
 def test_attribution_line_quote_stripped():
     """'On <date>, X wrote:' + >-lines matching a sibling is stripped."""
+    original = "The logo design is approved and the final files are attached here."
     t = _make_thread(
-        "The logo is approved.",
-        "On Mon, 1 Apr 2026, Alice wrote:\n> The logo is approved.\n\nGreat news!",
+        original,
+        f"On Mon, 1 Apr 2026, Alice wrote:\n> {original}\n\nGreat news!",
     )
     result = dedup_in_thread(t)
     reply_body = result.records[1].body_text
     assert "Great news!" in reply_body
-    assert "> The logo is approved." not in reply_body
+    assert original not in reply_body
 
 
 def test_attribution_line_external_kept():
@@ -128,17 +144,21 @@ def test_attribution_line_external_kept():
 
 def test_only_matching_quotes_stripped_in_mixed_record():
     """A record with both an in-thread quote and external history: only in-thread stripped."""
+    in_thread = (
+        "Here is the project brief with the full scope and timeline for your review."
+    )
+    external = "Some forwarded context from a different thread that no sibling record contains."
     t = _make_thread(
-        "Project brief.",
-        "> Project brief.\n\nMy response.\n\n> External context not in thread\n\nEnd.",
+        in_thread,
+        f"> {in_thread}\n\nMy response to the brief.\n\n> {external}\n\nEnd.",
     )
     result = dedup_in_thread(t)
     body = result.records[1].body_text
-    assert "My response." in body
+    assert "My response to the brief." in body
     assert "End." in body
-    assert "> Project brief." not in body
+    assert in_thread not in body  # in-thread repeat stripped
     # External context is kept because it doesn't match any sibling
-    assert "> External context not in thread" in body
+    assert external in body
 
 
 # ── tier and relevance preserved ─────────────────────────────────────────────

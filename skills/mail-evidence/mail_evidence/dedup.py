@@ -14,9 +14,17 @@ Algorithm per record in a thread:
      ("On <date>, X wrote:" followed by >-lines).
   2. For each quoted segment, normalise (strip > prefixes, collapse whitespace).
   3. Check if the normalised content is a substring of any sibling record's
-     normalised body.
+     normalised body — but only for blocks of at least _MIN_QUOTE_TOKENS tokens.
+     Shorter blocks are never stripped (a short generic confirmation can coincide
+     with a sibling by chance; losing it from a forward would be evidence loss).
   4. If match → strip (in-thread repeat). If no match → keep (forwarded/external).
   5. Original (non-quoted) lines are always kept.
+
+Note: the spec (§3.3) describes identity-first anchoring (resolve the attribution
+to a sibling Message-ID / sender+date) with content as the fallback. This module
+implements the content match plus the length floor, which achieves §6.4's
+protective goal (never strip external-only evidence); full identity anchoring is a
+possible refinement if real fixtures show coincidental long-block collisions.
 """
 
 from __future__ import annotations
@@ -30,6 +38,14 @@ _ATTRIBUTION_RE = re.compile(
     r"^On\s+.{5,80},\s*.{2,80}\s+wrote:$",
     re.IGNORECASE,
 )
+
+# A quoted block must carry at least this many content tokens before a sibling-body
+# match is trusted as a real in-thread repeat. Short generic blocks ("thanks,
+# approved — invoice to follow") can appear in a sibling body by coincidence;
+# stripping such a block out of a forwarded/external quote would be silent evidence
+# loss — the exact case §6.4 protects. So we bias toward KEEPING anything shorter.
+# This is a pragmatic floor in lieu of full identity-first anchoring (spec §3.3).
+_MIN_QUOTE_TOKENS = 8
 
 
 def dedup_in_thread(thread: Thread) -> Thread:
@@ -136,9 +152,16 @@ def _strip_in_thread_quotes(body: str, sibling_bodies: list[str]) -> str:
 
 
 def _is_in_thread_quote(quote_lines: list[str], sibling_bodies: list[str]) -> bool:
-    """Return True if the quoted block content is found in any sibling body."""
+    """
+    Return True only when the quoted block is long enough to safely attribute AND
+    its content appears verbatim in a sibling record's body.
+
+    The length floor (_MIN_QUOTE_TOKENS) keeps short generic confirmations that
+    coincide with a sibling from being stripped out of forwarded/external context
+    (§6.4): over-stripping is silent evidence loss, so short blocks are always kept.
+    """
     normalised_quote = _normalise("\n".join(quote_lines))
-    if not normalised_quote:
+    if len(normalised_quote.split()) < _MIN_QUOTE_TOKENS:
         return False
     for sibling in sibling_bodies:
         if normalised_quote in sibling:

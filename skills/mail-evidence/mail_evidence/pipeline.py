@@ -1,13 +1,21 @@
 """
 Top-level pipeline: run(config, judge, store) -> Iterator[list[Thread]].
 
-Ties together fetch → assemble → dedup → classify_tier → condition.
-Yields one batch of Thread objects at a time so the consumer can durably
-process and call commit_watermark() between batches.
+Ties together fetch → assemble → dedup → classify_tier → condition, then yields
+the surviving threads in config.batch_size-sized slices for ergonomic downstream
+processing.
 
-Large-delta guard (§6.5): the window + max_messages cap bounds each run.
-The consumer processes a batch, persists, then commits the watermark. A crash
-re-fetches at most one batch.
+Scope / honest limits (§6.5 — large-delta guard):
+  - Each run is BOUNDED, not streamed: fetch pulls up to max_messages (within the
+    window) in one pass, and all threads are conditioned before the first slice is
+    yielded. The batch_size slicing is a convenience for the consumer, not
+    memory-bounded streaming. At a freelancer's mail volume (cap 500/run) this is
+    fine; true incremental streaming is the 1.10 runner's job.
+  - run() does NOT advance the watermark and does not surface a per-batch
+    high-water timestamp. Cross-run resumption works via the IMAP SINCE search
+    (so a re-run does not re-pull already-windowed mail); the caller persists the
+    watermark by committing the max date of durably-processed records. The 1.10
+    runner owns that real (batch, high_water) contract — see build-plan 1.10.
 """
 
 from __future__ import annotations
@@ -36,14 +44,12 @@ def run(
     watermark: datetime | None = None,
 ) -> Iterator[list[Thread]]:
     """
-    Run the full mail-evidence pipeline.
+    Run the full mail-evidence pipeline for one bounded fetch.
 
-    Yields batches of Thread objects (config.batch_size per batch). The consumer
-    must call commit_watermark() after processing each batch to advance the
-    watermark durably.
-
-    Batch iteration over config.batch_size threads — enables processing large
-    inboxes without loading all threads into memory at once.
+    Fetches up to config.max_messages within the window, conditions every thread,
+    then yields the survivors in config.batch_size-sized slices. The slicing is for
+    downstream ergonomics — it is not memory-bounded streaming, and this function
+    does not advance the watermark (see module docstring and build-plan 1.10).
     """
     _log.info(
         "mail-evidence: run() starting (folders=%r, watermark=%s)",
