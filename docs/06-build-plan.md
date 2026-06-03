@@ -8,7 +8,10 @@ architectural moments.
 
 ## Current phase
 
-**Phase 0 — preconditions.** Update this pointer as phases close.
+**Phase 1 — components.** Phase 0 preconditions all confirmed (2026-05-30). Done:
+1.1–1.7 + 1.6.5. **Next: 1.6.6** (rewire 1.7 onto mail-evidence, retire imap-fetch),
+then **1.8** (gate → create_proforma). 1.9 (settlement) after. Update this pointer as
+tasks close.
 
 ---
 
@@ -36,9 +39,17 @@ is handled as completion evidence (CC threads), not a separate module.
 | 1.4 | morning bridge: create-draft (dry-run + sandbox) + double-bill guard; deny-list absent | `03` | DoD in `03`; deny tools asserted absent. | Sonnet |
 | 1.5 | IMAP fetch skill (read-only, watermark, CC/thread) | `04` | DoD in `04`; write-command test fails closed. | Sonnet |
 | 1.6 | Transcript folder reader → evidence shape | `04` (Transcripts) | Text files normalize to evidence records. | Sonnet |
+| 1.6.5 | Portable `mail-evidence` package (fetch INBOX+Sent, References-chain threading, in-thread dedup, header tiering T1/T2/T3, injected RelevanceJudge/ContactStore, batch+watermark) | `mail-evidence-SPEC` | All 8 SPEC §8 ACs tested; import-guard fails on Google/invoicing/`billable`. | Sonnet |
 | 1.7 | Invoicing rules skill: settle → scan → match → infer → price → propose | `05`, `02`, `01` | Produces a review packet on the fixtures month. | Opus then Sonnet* |
+| 1.6.6 | Rewire 1.7 evidence onto mail-evidence; retire `skills/imap-fetch/` | `mail-evidence-SPEC §7` | `invoicing_rules.unify` consumes `mail_evidence` output (reconcile Address-obj vs flat-str from_/to/cc); imap-fetch deleted; suite green. | Sonnet |
 | 1.8 | Rules skill: gate handoff → bridge create-draft (dry-run) + ledger record | `05`, `01 §5` | Approved items emit correct payloads; ledger updated. | Sonnet |
 | 1.9 | Settlement reconciliation incl. orphans + revert + diff report | `02 §C` | Second-run scenario reconciles qty edit, deleted line, orphan. | Opus then Sonnet* |
+
+> **1.5/1.6 migration note:** 1.6.5 migrated the imap-fetch fetch logic into
+> `mail-evidence` (now INBOX+Sent, cross-folder threading) and moved `EvidenceRecord`
+> ownership there (transcripts now import it from `mail_evidence.records`). Until 1.6.6,
+> `skills/imap-fetch/` and `invoicing_rules.evidence` still use the legacy
+> `imap_fetch.Message` — two email schemas coexist by design; 1.6.6 collapses them.
 
 *1.7 and 1.9 carry the hardest reasoning. Draft the approach/prompt with Opus, then let
 Sonnet implement and iterate against fixtures.
