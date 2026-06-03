@@ -215,6 +215,11 @@ mail_evidence/
   are unchanged; it must populate the unified schema (`from_=None`, `to=[]`, `cc=[]`).
 - If a Cowork SKILL.md wrapper is still wanted, it imports the library — no logic in
   the skill.
+- **Status (post-1.6.6):** fetch logic + watermark + `EvidenceRecord` migrated; `skills/imap-fetch/`
+  deleted. Its `cli.py`/`probe_connection.py` were **not** ported — the package has the fetch
+  engine but no runner/CLI. A thin runner (fetch INBOX+Sent, print/export a batch, show/advance
+  watermark, connection probe) is tracked as build-plan task **1.10**, required before Phase 2
+  live fetch. The `Message` shape is gone — `EvidenceRecord` is the single email+transcript type.
 
 ---
 

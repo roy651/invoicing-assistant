@@ -44,12 +44,14 @@ is handled as completion evidence (CC threads), not a separate module.
 | 1.6.6 | Rewire 1.7 evidence onto mail-evidence; retire `skills/imap-fetch/` | `mail-evidence-SPEC §7` | `invoicing_rules.unify` consumes `mail_evidence` output (reconcile Address-obj vs flat-str from_/to/cc); imap-fetch deleted; suite green. | Sonnet |
 | 1.8 | Rules skill: gate handoff → bridge create-draft (dry-run) + ledger record | `05`, `01 §5` | Approved items emit correct payloads; ledger updated. | Sonnet |
 | 1.9 | Settlement reconciliation incl. orphans + revert + diff report | `02 §C` | Second-run scenario reconciles qty edit, deleted line, orphan. | Opus then Sonnet* |
+| 1.10 | `mail-evidence` runner/CLI (live fetch entry point) | `mail-evidence-SPEC §3.1,§5` | Drive `run()` against a real mailbox: fetch INBOX+Sent, print/export a batch, show + `--advance` watermark, probe connection. Re-homes the CLI/probe retired with imap-fetch in 1.6.6. Needed before Phase 2 live fetch. | Sonnet |
 
 > **1.5/1.6 migration note:** 1.6.5 migrated the imap-fetch fetch logic into
 > `mail-evidence` (now INBOX+Sent, cross-folder threading) and moved `EvidenceRecord`
-> ownership there (transcripts now import it from `mail_evidence.records`). Until 1.6.6,
-> `skills/imap-fetch/` and `invoicing_rules.evidence` still use the legacy
-> `imap_fetch.Message` — two email schemas coexist by design; 1.6.6 collapses them.
+> ownership there. 1.6.6 collapsed the two email schemas onto `mail_evidence.EvidenceRecord`
+> and deleted `skills/imap-fetch/` — including its `cli.py`/`probe_connection.py`. The
+> package now has the fetch engine but **no runner/CLI**; 1.10 re-homes that (gap is not on
+> the critical path to 1.8/1.9, but is required before Phase 2 touches a real mailbox).
 
 *1.7 and 1.9 carry the hardest reasoning. Draft the approach/prompt with Opus, then let
 Sonnet implement and iterate against fixtures.
