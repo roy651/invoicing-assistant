@@ -9,9 +9,9 @@ architectural moments.
 ## Current phase
 
 **Phase 1 — components.** Phase 0 preconditions all confirmed (2026-05-30). Done:
-1.1–1.7, 1.6.5, 1.6.6 (imap-fetch retired; `unify` now consumes mail-evidence).
-**Next: 1.8** (gate → create_proforma + ledger write), then 1.9 (settlement). Update
-this pointer as tasks close.
+1.1–1.8, 1.6.5, 1.6.6. **Next: 1.9** (settlement: read issued docs back, reconcile
+qty edits / deletes / orphans, diff report), then 1.10 (mail-evidence runner). Then
+Phase 2 = real-fixtures go/no-go. Update this pointer as tasks close.
 
 ---
 
