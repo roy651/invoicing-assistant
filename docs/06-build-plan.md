@@ -45,6 +45,7 @@ is handled as completion evidence (CC threads), not a separate module.
 | 1.8 | Rules skill: gate handoff → bridge create-draft (dry-run) + ledger record | `05`, `01 §5` | Approved items emit correct payloads; ledger updated. | Sonnet |
 | 1.9 | Settlement reconciliation incl. orphans + revert + diff report; **+ CREATE idempotency** | `02 §C` | Second-run scenario reconciles qty edit, deleted line, orphan. Adds `proforma_doc_ref` column; CREATE skips items already carrying this cycle's `proforma_doc_ref` so a re-run never duplicates proformas (1.8 left this as a within-cycle gap — interim hardening only). | Opus then Sonnet* |
 | 1.10 | `mail-evidence` runner/CLI (live fetch entry point) | `mail-evidence-SPEC §3.1,§5` | Drive `run()` against a real mailbox: fetch INBOX+Sent, print/export a batch, probe connection. **Owns the real batch/watermark contract** the `pipeline.run()` docstrings defer: surface a per-batch high-water timestamp (or compute it from durably-persisted records) and `commit_watermark` only after a batch is persisted, so a crash re-fetches ≤1 batch. **Also owns settlement's fetch window:** choose `fetch_issued_invoices` `from_date` from the oldest unsettled proforma, and pass `fetch_open_proformas` into `settle_ledger` (else false reverts → duplicate proformas). Re-homes the CLI/probe retired with imap-fetch in 1.6.6. Needed before Phase 2 live fetch. | Sonnet |
+| 1.11 | Phase-2 **offline** fixture harness (NOT live — see scope fence) | `07`, `02 §C`, `01 §5` | **A (mail-evidence, generic):** `.eml`/`.mbox` ingestion adapter reusing `imap.py` decoders + `_assign_thread_ids` + `_raw_to_record` → byte-identical `EvidenceRecord`/threading to live; honors INBOX/Sent; passes portability guard. **B (invoicing, domain):** runnable that ingests fixtures → `unify`, loads fixture state, exposes a documented seam where the **model** writes `status_agent`/`confidence`/`qty_proposed`, runs `resolve_all`+`build_review_packet`+`settle_ledger` (fixture `live_proforma_ids`), and scores vs `fixtures/expected-ledger.csv` on the §07 metrics. Judge/Store injectable with fixture defaults. **Scope fence:** no live IMAP runner / watermark / live fetch wiring (those are 1.10). | Sonnet |
 
 > **1.5/1.6 migration note:** 1.6.5 migrated the imap-fetch fetch logic into
 > `mail-evidence` (now INBOX+Sent, cross-folder threading) and moved `EvidenceRecord`
@@ -57,6 +58,17 @@ is handled as completion evidence (CC threads), not a separate module.
 Sonnet implement and iterate against fixtures.
 
 Gate: each task passes its row before the next that depends on it.
+
+### Open refinements (deferred — revisit when real fixtures justify)
+
+- **Dedup identity-first anchoring (1.6.5).** `dedup.py` matches in-thread quotes by
+  content-substring + a min-token floor (achieves §6.4's protective goal). The spec
+  (§3.3) also describes resolving the attribution to a sibling Message-ID / sender+date.
+  Add that anchoring if Phase-2 fixtures surface coincidental long-block collisions.
+- **`proforma_doc_ref` audit retention (1.9).** Implemented as a *pending marker*
+  (cleared at settlement); the durable proforma→invoice trail lives in morning's
+  `linkedDocumentIds`. Reviewer-accepted, but if local auditability of a reverted
+  proforma is later wanted, switch to retained id + a separate `proforma_pending` flag.
 
 ---
 

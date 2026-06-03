@@ -18,6 +18,7 @@ from mail_evidence.assemble import assemble_threads
 from mail_evidence.config import FetchConfig
 from mail_evidence.dedup import dedup_in_thread
 from mail_evidence.fetch.imap import ImapClient, fetch_messages
+from mail_evidence.fetch.offline import ingest_email_export
 from mail_evidence.fetch.watermark import commit_watermark, load_watermark
 from mail_evidence.pipeline import run
 from mail_evidence.promote import condition
@@ -44,6 +45,7 @@ __all__ = [
     # fetch
     "ImapClient",
     "fetch_messages",
+    "ingest_email_export",
     # pipeline stages
     "assemble_threads",
     "dedup_in_thread",
