@@ -90,12 +90,19 @@ def _folder_for(path: Path, root: Path) -> str:
 
 
 def _messages_in(path: Path) -> Iterator[bytes]:
-    """Yield the raw RFC822 bytes of each message in an .eml (one) or .mbox (many)."""
+    """Yield the raw RFC822 bytes of each message in an .eml (one) or .mbox (many).
+
+    For .mbox we use mailbox's message-boundary detection (which correctly handles
+    `From ` escaping) but read each message via ``get_bytes`` rather than iterating
+    message objects: real exports carry non-ASCII (e.g. Hebrew) sender names on the
+    ``From `` postmark line, and constructing a message object decodes that line as
+    strict ASCII and raises. ``get_bytes`` skips the postmark line without decoding it.
+    """
     if path.suffix.lower() == ".mbox":
         box = mailbox.mbox(str(path))
         try:
-            for message in box:
-                yield message.as_bytes()
+            for key in box.iterkeys():
+                yield box.get_bytes(key)
         finally:
             box.close()
     else:

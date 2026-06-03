@@ -197,6 +197,18 @@ def test_mbox_ingestion(tmp_path):
     assert {r.id for r in records} == {"<a@host>", "<b@host>"}
 
 
+def test_mbox_non_ascii_postmark_line(tmp_path):
+    """Real exports carry non-ASCII (e.g. Hebrew) sender names on the mbox 'From '
+    postmark line. Constructing a message object decodes that line as strict ASCII
+    and raises; ingestion must read past it via get_bytes instead."""
+    msg = _raw(message_id="<heb@host>", subject="One", body="First")
+    postmark = "From דנה@acme.co.il Mon May 04 09:00:00 2026\n".encode()
+    (tmp_path / "Export.mbox").write_bytes(postmark + msg + b"\n")
+
+    records = ingest_email_export(tmp_path)
+    assert {r.id for r in records} == {"<heb@host>"}
+
+
 # ── dedup by Message-ID across folders ───────────────────────────────────────
 
 
