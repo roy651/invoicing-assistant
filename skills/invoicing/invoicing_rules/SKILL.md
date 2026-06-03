@@ -17,20 +17,19 @@ price them, and present a **review packet** for the human gate.
 
 You **stop at the packet for the human to decide.** Only after their explicit
 approval do you prepare **draft proformas** (the morning bridge can only create
-non-fiscal Proformas, never tax invoices) and record the result. You never issue,
-never bill, never settle — settlement is a separate skill.
+non-fiscal Proformas, never tax invoices) and record the result. You never issue
+a tax invoice, never bill — issuance is the human converting a proforma in morning.
 
-The forward pass is deterministic in order: **SCAN → MATCH → INFER → PRICE →
+The cycle is deterministic in order: **SETTLE → SCAN → MATCH → INFER → PRICE →
 PROPOSE.** Then the human gate decides; on approval you run **CREATE → RECORD.**
 At each mechanical step you call the existing Python helpers in
 `invoicing_rules`; the *reasoning* (MATCH, INFER) is yours, but it must obey the
 rules below. Do not re-derive schema or algorithm from memory — the helpers and
 `docs/01`/`docs/02` are the source of truth.
 
-> Settlement (reading issued morning docs back) runs *before* SCAN in the full
-> monthly machine (`docs/02 §B`), but it is a separate skill. Assume it has
-> already run: the ledger you load is reconciled to morning. You reason forward
-> only.
+> Settle FIRST (`docs/02 §B`): last month's manual edits in morning are absorbed
+> before this month's reasoning starts, so you reason forward from a ledger that
+> already matches reality.
 
 ## Invariants (hold at every step — enforce in your output, not just intent)
 
@@ -52,6 +51,34 @@ rules below. Do not re-derive schema or algorithm from memory — the helpers an
    flag it, never more.
 
 ---
+
+## Step 0 — SETTLE (first, before anything else)
+
+Reconcile the ledger to what was actually ISSUED in morning since the last run,
+so this month reasons from reality. **morning is truth** — `qty_billed_to_date`
+accumulates only from issued invoices read back here, never from a proposal or a
+gate approval.
+
+```python
+from invoicing_rules import fetch_issued_invoices, settle_ledger, write_ledger
+
+issued = fetch_issued_invoices(client, from_date=last_settled_date)
+report = settle_ledger(ledger, issued, profiles)
+write_ledger(ledger, ledger_csv)
+# Show report.summary() to the user before any new proposing.
+```
+
+`settle_ledger` matches each item carrying a pending `proforma_doc_ref` to its
+issued invoice (via `linkedDocumentIds`, content fallback otherwise) and records
+the truth: `qty_billed_actual` = the issued line quantity, accumulates
+`qty_billed_to_date`, sets `morning_doc_ref` to the invoice id, recomputes status,
+and clears `proforma_doc_ref`. A proforma that was never issued (deleted draft /
+deleted line / deleted invoice) **reverts to open** — `qty_billed_to_date`
+unchanged, work not lost. Issued lines with no ledger item are **orphans**:
+back-filled + flagged for managed clients, recorded silently for unmanaged ones.
+
+Read-only: settlement uses only morning read endpoints. Present
+`report.summary()` so the user can correct the reconciliation before proposing.
 
 ## Step 1 — SCAN
 
@@ -220,7 +247,8 @@ listing every offender, if any approved item has no resolvable price or no
 `morning_client_id` — never guess a price, never half-build a batch.
 
 `create_and_record` is the RECORD step (docs/05 step 9): it writes each proforma id
-to `morning_doc_ref` (settlement later overwrites it with the issued-invoice id) and
+to `proforma_doc_ref` (which marks the item pending and makes CREATE idempotent;
+settlement later moves the linkage to `morning_doc_ref` as the issued-invoice id) and
 leaves `qty_billed_actual` empty — **only next cycle's settlement fills that, from
 the *issued* document** (morning is truth; never accumulate `qty_billed_to_date` from
 a proposal or an approval).
@@ -232,18 +260,21 @@ Hard limits that still hold here:
 - **Dry-run by default.** With `DRY_RUN=true` the bridge returns the payload and
   makes no network call — use it to show the user exactly what would be created
   before anything touches morning.
-- **⚠️ CREATE is not yet idempotent. Never re-run it within a cycle.** Re-running
-  on the same approved ledger creates **duplicate proformas**, and morning has **no
-  API delete** (dashboard cleanup only). If a run is interrupted, check morning for
-  what was already created before retrying — `create_and_record` persists after each
-  proforma, so at most one created proforma can be missing its `morning_doc_ref` on
-  disk. Within-cycle idempotency (skip items already carrying this cycle's
-  `proforma_doc_ref`) lands in 1.9.
+- **Idempotent within a cycle.** `build_proforma_requests` skips any item that
+  already carries a `proforma_doc_ref` (a proforma was already created for it this
+  cycle), so re-running CREATE does not duplicate. `create_and_record` also persists
+  the ledger after each proforma, so an interrupted run leaves at most one created
+  proforma unrecorded on disk. Still: morning has **no API delete**, so if a run is
+  interrupted, glance at morning before retrying. Settlement clears
+  `proforma_doc_ref`, so a reverted/re-opened item becomes billable again next cycle.
 - Never call any issue / send / close / delete endpoint (the bridge has none).
 
 ## Never
 
-- Issue, send, close, or email any document.
-- Set `status_confirmed` / `decision` / `qty_approved` — those are the gate's.
+- Issue, send, close, or email any document; never create anything but a Proforma.
+- Set `status_confirmed` / `decision` / `qty_approved` at the gate's expense —
+  those are the human's columns. (SETTLE does write `status_confirmed` from issued
+  truth, and `qty_billed_actual` / `qty_billed_to_date` — that is morning's reality,
+  not a proposal.)
 - Accumulate `qty_billed_to_date` from anything but a settled, issued document.
-- Settle against morning (that is the separate settlement skill).
+- Call any morning write endpoint other than `create_proforma` (the bridge has none).

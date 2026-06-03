@@ -24,6 +24,12 @@ from invoicing_rules.packet import (
     build_review_packet,
 )
 from invoicing_rules.pricing import PriceResult, resolve_all, resolve_price
+from invoicing_rules.settle import (
+    QtyEdit,
+    SettlementReport,
+    fetch_issued_invoices,
+    settle_ledger,
+)
 from invoicing_rules.state import (
     Agreement,
     ClientProfile,
@@ -65,4 +71,9 @@ __all__ = [
     "ProformaRequest",
     "apply_results",
     "create_and_record",
+    # settlement (read issued docs back → reconcile)
+    "settle_ledger",
+    "SettlementReport",
+    "QtyEdit",
+    "fetch_issued_invoices",
 ]

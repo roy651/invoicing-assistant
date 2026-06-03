@@ -175,7 +175,11 @@ class LedgerItem:
     decision: str | None  # "bill" | "partial" | "defer" | "hold"
     qty_approved: float | None
     qty_billed_actual: float | None
-    morning_doc_ref: str | None
+    morning_doc_ref: str | None  # the issued-invoice id (set at settlement)
+    # The pending proforma id (set at RECORD, cleared at settlement). Its presence
+    # means "a proforma exists for this item this cycle" — CREATE skips such items
+    # (idempotency), and settlement reconciles them against issued invoices.
+    proforma_doc_ref: str | None = field(default=None)
     notes: str | None = field(default=None)
 
 
@@ -205,6 +209,7 @@ LEDGER_COLUMNS = [
     "qty_approved",
     "qty_billed_actual",
     "morning_doc_ref",
+    "proforma_doc_ref",
     "notes",
 ]
 
@@ -241,6 +246,7 @@ def load_ledger(path: str | Path) -> list[LedgerItem]:
                 qty_approved=_float(r.get("qty_approved", "")),
                 qty_billed_actual=_float(r.get("qty_billed_actual", "")),
                 morning_doc_ref=_str(r.get("morning_doc_ref", "")),
+                proforma_doc_ref=_str(r.get("proforma_doc_ref", "")),
                 notes=_str(r.get("notes", "")),
             )
         )
@@ -291,6 +297,7 @@ def write_ledger(ledger: list[LedgerItem], path: str | Path) -> None:
                     "qty_approved": _cell(item.qty_approved),
                     "qty_billed_actual": _cell(item.qty_billed_actual),
                     "morning_doc_ref": _cell(item.morning_doc_ref),
+                    "proforma_doc_ref": _cell(item.proforma_doc_ref),
                     "notes": _cell(item.notes),
                 }
             )

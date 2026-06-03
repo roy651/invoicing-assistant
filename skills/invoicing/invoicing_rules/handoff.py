@@ -181,9 +181,11 @@ def apply_results(
     """
     Record the created proforma id onto the ledger rows it covers.
 
-    Writes the proforma's morning id to `morning_doc_ref` for every item in
-    `request.item_ids` (docs/02 linkage: settlement later overwrites this with the
-    issued-invoice id and keeps the proforma id in proforma_doc_ref, added at 1.9).
+    Writes the proforma's morning id to `proforma_doc_ref` for every item in
+    `request.item_ids`. That marks the item as having a pending proforma this cycle:
+    CREATE skips it on a re-run (idempotency), and settlement matches it to the
+    issued invoice (via linkedDocumentIds), then moves the id to `morning_doc_ref`
+    and clears `proforma_doc_ref` (docs/02 linkage).
 
     Dry-run results ({"dry_run": True, ...}) carry no id, so nothing is recorded —
     returns []. Otherwise returns the list of item_ids updated.
@@ -197,7 +199,7 @@ def apply_results(
     doc_id = result.get("id")
     if not doc_id:
         raise ValueError(
-            "create_proforma result has no 'id' — cannot record morning_doc_ref"
+            "create_proforma result has no 'id' — cannot record proforma_doc_ref"
         )
 
     by_id = {item.item_id: item for item in ledger}
@@ -206,7 +208,7 @@ def apply_results(
         item = by_id.get(item_id)
         if item is None:
             continue
-        item.morning_doc_ref = str(doc_id)
+        item.proforma_doc_ref = str(doc_id)
         updated.append(item_id)
     return updated
 
@@ -252,6 +254,12 @@ def create_and_record(
 def _is_billable(item: LedgerItem, profiles: dict[str, ClientProfile]) -> bool:
     profile = profiles.get(item.bill_to)
     if profile is None or not profile.managed_by_agent:
+        return False
+    # Idempotency: a set proforma_doc_ref means a proforma was already created for
+    # this item this cycle and has not yet settled. Skip it so a re-run of CREATE
+    # never produces a duplicate (morning has no API delete). Settlement clears
+    # proforma_doc_ref, so a re-opened partial item becomes billable again next cycle.
+    if item.proforma_doc_ref:
         return False
     # The gate writes status_confirmed + decision + qty_approved together; require
     # status_confirmed so a half-written gate row is never billed.

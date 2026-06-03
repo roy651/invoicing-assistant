@@ -352,7 +352,10 @@ def test_apply_results_records_proforma_id():
     updated = apply_results(ledger, reqs[0], result)
     assert set(updated) == {"SPRIG-ACME-web-001", "SPRIG-ACME-rollup-001"}
     for item in ledger:
-        assert item.morning_doc_ref == "doc-40001"
+        # The pending proforma id lands in proforma_doc_ref; morning_doc_ref stays
+        # empty until settlement records the issued-invoice id.
+        assert item.proforma_doc_ref == "doc-40001"
+        assert item.morning_doc_ref is None
         # qty_billed_actual stays empty until settlement reads the issued doc.
         assert item.qty_billed_actual is None
 
@@ -363,10 +366,10 @@ def test_apply_results_dry_run_records_nothing():
     reqs = build_proforma_requests(ledger, profiles, pb, agrs, _MONTH)
     updated = apply_results(ledger, reqs[0], {"dry_run": True, "payload": {}})
     assert updated == []
-    assert ledger[0].morning_doc_ref is None
+    assert ledger[0].proforma_doc_ref is None
 
 
-def test_write_ledger_persists_morning_doc_ref(tmp_path):
+def test_write_ledger_persists_proforma_doc_ref(tmp_path):
     profiles, pb, agrs = _refs()
     ledger = [_web_partial(), _logo_direct()]
     reqs = build_proforma_requests(ledger, profiles, pb, agrs, _MONTH)
@@ -377,12 +380,21 @@ def test_write_ledger_persists_morning_doc_ref(tmp_path):
     write_ledger(ledger, out)
     reloaded = {it.item_id: it for it in load_ledger(out)}
 
-    assert reloaded["SPRIG-ACME-web-001"].morning_doc_ref == "doc-SPRIG"
-    assert reloaded["DIRECT-logo-001"].morning_doc_ref == "doc-DIRECT_IL"
+    assert reloaded["SPRIG-ACME-web-001"].proforma_doc_ref == "doc-SPRIG"
+    assert reloaded["DIRECT-logo-001"].proforma_doc_ref == "doc-DIRECT_IL"
     # Untouched fields survive the round-trip.
     assert reloaded["SPRIG-ACME-web-001"].qty_approved == 0.4
     assert reloaded["SPRIG-ACME-web-001"].price_ref == "agr-sprig-acme-web-001"
     assert reloaded["DIRECT-logo-001"].currency == "ILS"
+
+
+def test_already_proforma_d_item_excluded_idempotency():
+    """An item carrying a pending proforma_doc_ref is not re-billed (no duplicate)."""
+    profiles, pb, agrs = _refs()
+    item = _rollup_units()
+    item.proforma_doc_ref = "doc-already-created"
+    reqs = build_proforma_requests([item], profiles, pb, agrs, _MONTH)
+    assert reqs == []
 
 
 # ── create_and_record: interleaved create → record → persist ─────────────────
@@ -411,8 +423,8 @@ def test_create_and_record_persists_each_proforma(tmp_path):
 
     assert len(results) == 2
     reloaded = {it.item_id: it for it in load_ledger(out)}
-    assert reloaded["SPRIG-ACME-web-001"].morning_doc_ref == "doc-ACME"
-    assert reloaded["SPRIG-BETA-001"].morning_doc_ref == "doc-BETA"
+    assert reloaded["SPRIG-ACME-web-001"].proforma_doc_ref == "doc-ACME"
+    assert reloaded["SPRIG-BETA-001"].proforma_doc_ref == "doc-BETA"
 
 
 def test_create_and_record_persists_before_next_request(tmp_path):
@@ -438,7 +450,7 @@ def test_create_and_record_persists_before_next_request(tmp_path):
         if bridge_req["description"] == "BETA":
             # By the time BETA is created, ACME must already be persisted.
             persisted = {it.item_id: it for it in load_ledger(out)}
-            assert persisted["SPRIG-ACME-web-001"].morning_doc_ref == "doc-ACME"
+            assert persisted["SPRIG-ACME-web-001"].proforma_doc_ref == "doc-ACME"
         return {"id": f"doc-{bridge_req['description']}", "type": 300}
 
     create_and_record(None, reqs, ledger, out, create_fn=spy_create)
@@ -455,6 +467,6 @@ def test_create_and_record_dry_run_records_nothing(tmp_path, monkeypatch):
     results = create_and_record(None, reqs, ledger, out, create_fn=create_proforma)
 
     assert results[0]["dry_run"] is True
-    # Nothing real was created → no morning_doc_ref recorded, on disk or in memory.
-    assert ledger[0].morning_doc_ref is None
-    assert load_ledger(out)[0].morning_doc_ref is None
+    # Nothing real was created → no proforma_doc_ref recorded, on disk or in memory.
+    assert ledger[0].proforma_doc_ref is None
+    assert load_ledger(out)[0].proforma_doc_ref is None

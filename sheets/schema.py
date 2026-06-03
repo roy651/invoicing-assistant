@@ -69,6 +69,7 @@ LEDGER = [
     "qty_approved",
     "qty_billed_actual",
     "morning_doc_ref",
+    "proforma_doc_ref",
     "notes",
 ]
 
