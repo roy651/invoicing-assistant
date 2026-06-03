@@ -139,19 +139,39 @@ approves the review packet they convert each proforma to a real Invoice in morni
 2XXX series, type 305).  morning automatically links the issued invoice back to its source
 proforma via `linkedDocumentIds`.
 
-Settlement reads the **issued Invoices** as truth (not the proformas).  To match each
-invoice line back to its ledger item:
+**Column semantics (as implemented in 1.9).** `proforma_doc_ref` is a **pending
+marker**, not an audit field: RECORD writes the created proforma id there, and its
+presence means "a proforma exists for this item this cycle, awaiting settlement." It
+makes CREATE idempotent — `build_proforma_requests` skips any item that already carries
+one, so a re-run can't duplicate a (non-deletable) proforma. Settlement resolves it and
+clears it. `morning_doc_ref` holds the **issued-invoice id**, set at settlement. The
+durable proforma→invoice audit trail lives in **morning's `linkedDocumentIds`**, not in
+the ledger (a single column cannot hold a multi-installment item's full proforma
+history anyway).
 
-1. **Primary key** — `morning_doc_ref` on the ledger row stores the *proforma* id.
-   Look up the issued invoice that has the proforma id in its `linkedDocumentIds`.
-2. **Content fallback** — if `linkedDocumentIds` is absent or the proforma was deleted
-   before linking (edge case), match by `bill_to` + `description` heuristic.
-3. **Unmatched issued lines** → orphan path (see above).
+Settlement reads the **issued Invoices** as truth (not the proformas) and, crucially,
+also reads the **open Proformas** (type 300) to tell a not-yet-converted proforma apart
+from a deleted one. For each item carrying a pending `proforma_doc_ref`:
 
-The `morning_doc_ref` column should be updated at settlement to the *issued invoice* id
-once found, so subsequent runs can match directly without traversing `linkedDocumentIds`
-again.  The proforma id is retained in a separate `proforma_doc_ref` column (added at 1.9)
-for audit purposes.
+1. **Primary key** — find the issued invoice whose `linkedDocumentIds` contains the
+   item's `proforma_doc_ref`. Match the line within it by description.
+2. **Content fallback** — if no invoice links it (proforma deleted before linking, or
+   `linkedDocumentIds` absent), match by morning client id + `description`.
+3. **Resolve to one of three states:**
+   - *Settled* — an invoice line matched → record `qty_billed_actual`, accumulate
+     `qty_billed_to_date`, set `morning_doc_ref` to the invoice id, recompute status,
+     **clear `proforma_doc_ref`**.
+   - *Still pending* — no invoice yet, but the proforma is still a live type-300 doc
+     (issuance is human-paced and asynchronous) → **leave `proforma_doc_ref` set**, do
+     not revert. Reverting a live proforma would re-propose it into a duplicate.
+   - *Reverted* — the proforma's invoice line was deleted, or the proforma no longer
+     exists at all → revert to open, `qty_billed_to_date` unchanged, work not lost.
+4. **Unmatched issued lines** → orphan path (see above).
+
+> The issued-invoice search window must reach back to the **oldest unsettled proforma**,
+> not just last month — a proforma may be converted long after creation. Too narrow a
+> window makes a late-issued invoice invisible and risks a false revert. The runner
+> (task 1.10) chooses this date from the oldest pending ledger row.
 
 ---
 

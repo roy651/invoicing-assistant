@@ -45,6 +45,9 @@ from morning_bridge.drafts import create_proforma
 # Decisions that result in a billed line. "defer"/"hold" are not billed.
 _BILLABLE_DECISIONS = {"bill", "partial"}
 
+# status_confirmed is a completion enum (docs/01), empty until the gate confirms.
+_CONFIRMED_STATUSES = {"not_started", "in_progress", "complete"}
+
 # Subtitle separator format (agency end-client header), per docs/01 §5.
 _SUBTITLE_DASHES = "------------"
 
@@ -261,9 +264,10 @@ def _is_billable(item: LedgerItem, profiles: dict[str, ClientProfile]) -> bool:
     # proforma_doc_ref, so a re-opened partial item becomes billable again next cycle.
     if item.proforma_doc_ref:
         return False
-    # The gate writes status_confirmed + decision + qty_approved together; require
-    # status_confirmed so a half-written gate row is never billed.
-    if not item.status_confirmed:
+    # The gate writes status_confirmed + decision + qty_approved together; require a
+    # real status_confirmed enum value so a half-written gate row is never billed.
+    # Positive membership, NOT truthiness — a stray "FALSE" string can't slip through.
+    if item.status_confirmed not in _CONFIRMED_STATUSES:
         return False
     if item.decision not in _BILLABLE_DECISIONS:
         return False

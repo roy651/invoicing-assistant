@@ -197,7 +197,7 @@ def test_settle_deleted_line_reverts():
 
 
 def test_settle_deleted_invoice_reverts():
-    """No issued invoice references the proforma at all (draft/invoice deleted)."""
+    """Proforma confirmed gone (no invoice, not among live proformas) → revert."""
     item = _pending(
         "SPRIG-ACME-web-001",
         "SPRIG",
@@ -205,10 +205,42 @@ def test_settle_deleted_invoice_reverts():
         description="Scrollable website",
         qty_billed_to_date=0.3,
     )
-    report = settle_ledger([item], [], _profiles())
+    # live_proforma_ids=set() → the proforma no longer exists in morning.
+    report = settle_ledger([item], [], _profiles(), live_proforma_ids=set())
     assert item.proforma_doc_ref is None
     assert item.qty_billed_to_date == 0.3
     assert report.reverted == ["SPRIG-ACME-web-001"]
+
+
+def test_settle_unconverted_proforma_stays_pending():
+    """A live proforma not yet converted to an invoice must NOT be reverted — doing so
+    would re-propose it and create a duplicate (morning has no API delete)."""
+    item = _pending(
+        "SPRIG-ACME-web-001",
+        "SPRIG",
+        "pf-1",
+        description="Scrollable website",
+        qty_billed_to_date=0.3,
+    )
+    report = settle_ledger([item], [], _profiles(), live_proforma_ids={"pf-1"})
+    assert item.proforma_doc_ref == "pf-1"  # still pending, untouched
+    assert item.qty_billed_to_date == 0.3
+    assert report.still_pending == ["SPRIG-ACME-web-001"]
+    assert report.reverted == []
+
+
+def test_settle_unknown_liveness_is_conservative():
+    """With no liveness info (live_proforma_ids=None), never revert on a missing
+    invoice — stay pending rather than risk a duplicate."""
+    item = _pending(
+        "SPRIG-ACME-web-001", "SPRIG", "pf-1", description="Scrollable website"
+    )
+    report = settle_ledger(
+        [item], [], _profiles()
+    )  # live_proforma_ids defaults to None
+    assert item.proforma_doc_ref == "pf-1"
+    assert report.still_pending == ["SPRIG-ACME-web-001"]
+    assert report.reverted == []
 
 
 # ── orphans ──────────────────────────────────────────────────────────────────

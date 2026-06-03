@@ -249,10 +249,11 @@ def test_zero_or_missing_qty_approved_excluded(qty):
     assert reqs == []
 
 
-@pytest.mark.parametrize("status", [None, ""])
-def test_missing_status_confirmed_excluded(status):
-    """Defensive: a billable decision without status_confirmed is a half-written gate
-    row and must not be billed."""
+@pytest.mark.parametrize("status", [None, "", "FALSE", "yes", "true"])
+def test_non_enum_status_confirmed_excluded(status):
+    """status_confirmed must be a real completion enum value — tested positively, not
+    by truthiness. A stray "FALSE"/"true" string (e.g. a bool serialized by
+    write_ledger) must NOT slip an unconfirmed item through to billing."""
     profiles, pb, agrs = _refs()
     item = _rollup_units()
     item.status_confirmed = status

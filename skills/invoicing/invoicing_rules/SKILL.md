@@ -60,22 +60,33 @@ accumulates only from issued invoices read back here, never from a proposal or a
 gate approval.
 
 ```python
-from invoicing_rules import fetch_issued_invoices, settle_ledger, write_ledger
+from invoicing_rules import (
+    fetch_issued_invoices, fetch_open_proformas, settle_ledger, write_ledger,
+)
 
-issued = fetch_issued_invoices(client, from_date=last_settled_date)
-report = settle_ledger(ledger, issued, profiles)
+# from_date must reach back to the OLDEST unsettled proforma, not just last month —
+# issuance is human-paced, so a proforma may be converted long after creation.
+issued = fetch_issued_invoices(client, from_date=oldest_unsettled_date)
+live = fetch_open_proformas(client)   # type-300 docs still unconverted in morning
+report = settle_ledger(ledger, issued, profiles, live_proforma_ids=live)
 write_ledger(ledger, ledger_csv)
 # Show report.summary() to the user before any new proposing.
 ```
 
 `settle_ledger` matches each item carrying a pending `proforma_doc_ref` to its
-issued invoice (via `linkedDocumentIds`, content fallback otherwise) and records
-the truth: `qty_billed_actual` = the issued line quantity, accumulates
+issued invoice (via `linkedDocumentIds`, content fallback otherwise) and records the
+truth: `qty_billed_actual` = the issued line quantity, accumulates
 `qty_billed_to_date`, sets `morning_doc_ref` to the invoice id, recomputes status,
-and clears `proforma_doc_ref`. A proforma that was never issued (deleted draft /
-deleted line / deleted invoice) **reverts to open** — `qty_billed_to_date`
+and clears `proforma_doc_ref`. A proforma **not yet converted** (still a live type-300
+doc) is left **still pending** — never reverted, or it would re-propose into a
+duplicate. Only a proforma that is gone (deleted draft / deleted line / deleted
+invoice, and not among `live_proforma_ids`) **reverts to open** — `qty_billed_to_date`
 unchanged, work not lost. Issued lines with no ledger item are **orphans**:
 back-filled + flagged for managed clients, recorded silently for unmanaged ones.
+
+> Always pass `live_proforma_ids`. Without it settlement cannot distinguish a
+> not-yet-issued proforma from a deleted one and stays conservative (never reverts),
+> leaving items pending until liveness is known.
 
 Read-only: settlement uses only morning read endpoints. Present
 `report.summary()` so the user can correct the reconciliation before proposing.

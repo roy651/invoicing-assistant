@@ -48,6 +48,7 @@ class QtyEdit:
 class SettlementReport:
     settled: list[str] = field(default_factory=list)
     qty_edits: list[QtyEdit] = field(default_factory=list)
+    still_pending: list[str] = field(default_factory=list)  # proforma not yet issued
     reverted: list[str] = field(default_factory=list)
     orphans_flagged: list[str] = field(default_factory=list)  # new ledger item_ids
     orphans_silent: list[str] = field(default_factory=list)  # "<doc_id>#<line_idx>"
@@ -57,6 +58,7 @@ class SettlementReport:
         return (
             f"Since last time: {len(self.settled)} settled "
             f"({len(self.qty_edits)} with qty edits), "
+            f"{len(self.still_pending)} still pending (awaiting issuance), "
             f"{len(self.reverted)} reverted to open, "
             f"{len(self.orphans_flagged)} orphan(s) back-filled and flagged, "
             f"{len(self.orphans_silent)} silent orphan(s) on unmanaged clients. "
@@ -68,10 +70,21 @@ def settle_ledger(
     ledger: list[LedgerItem],
     issued_docs: list[dict],
     profiles: dict[str, ClientProfile],
+    *,
+    live_proforma_ids: set[str] | None = None,
 ) -> SettlementReport:
     """
     Reconcile the ledger to the issued invoices. Mutates `ledger` in place
     (updates pending items, appends orphan rows) and returns a SettlementReport.
+
+    `live_proforma_ids` are the ids of proformas (type 300) that STILL EXIST,
+    unconverted, in morning — fetch them with `fetch_open_proformas`. They are how a
+    not-yet-issued proforma (leave pending) is told apart from a deleted one (revert).
+    Issuance is human-paced and asynchronous, so a pending proforma usually has no
+    issued invoice yet; reverting it would re-propose the work and create a DUPLICATE
+    proforma (morning has no API delete). When `live_proforma_ids` is None the liveness
+    is unknown, so we are conservative and never revert on a missing invoice — the item
+    stays pending until a run can confirm the proforma is actually gone.
     """
     client_to_bill_to = {
         p.morning_client_id: p.bill_to for p in profiles.values() if p.morning_client_id
@@ -98,9 +111,19 @@ def settle_ledger(
             report.settled.append(item.item_id)
             if item.qty_approved is not None and abs(qty - item.qty_approved) > _EPS:
                 report.qty_edits.append(QtyEdit(item.item_id, item.qty_approved, qty))
+        elif doc is not None:
+            # The proforma WAS issued as this invoice (linked), but its line was
+            # deleted → revert this item to open. qty_billed_to_date unchanged.
+            item.proforma_doc_ref = None
+            report.reverted.append(item.item_id)
+        elif live_proforma_ids is None or item.proforma_doc_ref in live_proforma_ids:
+            # No issued invoice yet, but the proforma still exists (or liveness is
+            # unknown) → still pending. Do NOT revert: that would duplicate it.
+            report.still_pending.append(item.item_id)
         else:
-            # Proforma never issued (deleted draft / deleted line / deleted invoice).
-            item.proforma_doc_ref = None  # no longer pending; re-enters the open set
+            # No invoice and the proforma is gone (deleted draft / deleted invoice) →
+            # revert to open; work re-enters the open set, evidence intact.
+            item.proforma_doc_ref = None
             report.reverted.append(item.item_id)
 
     # 2. Orphans: issued lines no ledger item consumed.
@@ -134,6 +157,12 @@ def fetch_issued_invoices(
 
     Settlement reads issued invoices, not proformas. Returns the raw morning doc
     dicts (each carries `linkedDocumentIds` back to its source proforma).
+
+    IMPORTANT: `from_date` must reach back to the OLDEST unsettled proforma, not just
+    last month. Issuance is human-paced — a proforma created months ago may be
+    converted to an invoice only now. If the window misses that late invoice, the
+    item looks neither-issued-nor-live and gets falsely reverted (→ duplicate). The
+    runner (task 1.10) owns choosing this date from the oldest pending row.
     """
     from morning_bridge.reads import (
         DOC_STATUS_CLOSED,
@@ -149,6 +178,19 @@ def fetch_issued_invoices(
         to_date=to_date,
     )
     return resp.get("items", [])
+
+
+def fetch_open_proformas(client: object) -> set[str]:
+    """
+    Read-only: ids of Proformas (type 300) still OPEN (unconverted) in morning.
+
+    Pass the result as `settle_ledger(..., live_proforma_ids=...)` so a not-yet-issued
+    proforma is left pending instead of being reverted into a duplicate.
+    """
+    from morning_bridge.reads import DOC_TYPE_PROFORMA, search_documents
+
+    resp = search_documents(client, doc_type=[DOC_TYPE_PROFORMA])
+    return {str(d["id"]) for d in resp.get("items", []) if d.get("id")}
 
 
 # ── internal ──────────────────────────────────────────────────────────────────
@@ -178,7 +220,13 @@ def _find_settlement(
 def _match_line_index(
     item: LedgerItem, doc: dict, consumed: set[tuple[str, int]]
 ) -> int | None:
-    """First unconsumed, non-zero-priced income line whose description matches."""
+    """
+    First unconsumed, non-zero-priced income line whose description matches.
+
+    Limitation: startswith is first-match-wins. If two items share a description
+    prefix on the same invoice, the first in iteration order claims the first line.
+    Revisit against real fixtures (Phase 2) if same-prefix collisions occur.
+    """
     for idx, line in enumerate(doc.get("income", [])):
         if (str(doc["id"]), idx) in consumed:
             continue
@@ -240,6 +288,9 @@ def _doc_month(doc: dict) -> str | None:
 
 
 def _is_zero_priced(line: dict) -> bool:
+    # Zero-priced line = the synthesized agency subtitle/header, never an orphan.
+    # TODO(Phase 2): confirm morning's actual issued-line field names ("price" /
+    # "unitPrice") against real invoices so a subtitle is never mistaken for an orphan.
     val = _opt_float(line.get("price"))
     if val is None:
         val = _opt_float(line.get("unitPrice"))

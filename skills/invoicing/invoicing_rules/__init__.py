@@ -28,6 +28,7 @@ from invoicing_rules.settle import (
     QtyEdit,
     SettlementReport,
     fetch_issued_invoices,
+    fetch_open_proformas,
     settle_ledger,
 )
 from invoicing_rules.state import (
@@ -76,4 +77,5 @@ __all__ = [
     "SettlementReport",
     "QtyEdit",
     "fetch_issued_invoices",
+    "fetch_open_proformas",
 ]
