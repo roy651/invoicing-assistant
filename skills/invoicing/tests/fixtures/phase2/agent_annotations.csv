@@ -1,0 +1,2 @@
+item_id,status_agent,completion_evidence,confidence,qty_proposed
+SPRIG-ACME-web-001,in_progress,<inbox-1@host>: next stage approved; <reply-1@host>: invoice to follow,high,0.4

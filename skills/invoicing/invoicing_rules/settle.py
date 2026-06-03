@@ -289,8 +289,9 @@ def _doc_month(doc: dict) -> str | None:
 
 def _is_zero_priced(line: dict) -> bool:
     # Zero-priced line = the synthesized agency subtitle/header, never an orphan.
-    # TODO(Phase 2): confirm morning's actual issued-line field names ("price" /
-    # "unitPrice") against real invoices so a subtitle is never mistaken for an orphan.
+    # Field names anchored to the bridge's sandbox-verified income-line shape
+    # (morning_bridge.drafts._build_payload): `unitPrice` (unit) + `price` (line
+    # total). A subtitle has both 0. We check `price` first, `unitPrice` as fallback.
     val = _opt_float(line.get("price"))
     if val is None:
         val = _opt_float(line.get("unitPrice"))

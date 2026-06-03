@@ -1,0 +1,4 @@
+bill_to,is_agency,managed_by_agent,language,currency,vat_rate,morning_client_id,notes
+SPRIG,TRUE,TRUE,en,USD,0.00,morning-sprig-001,Agency client
+DIRECT_IL,FALSE,TRUE,he,ILS,0.18,morning-direct-001,Direct domestic client
+MANUAL_ONLY,FALSE,FALSE,he,ILS,0.18,,managed_by_agent=FALSE - never proposed

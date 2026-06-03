@@ -9,9 +9,11 @@ architectural moments.
 ## Current phase
 
 **Phase 1 — components.** Phase 0 preconditions all confirmed (2026-05-30). Done:
-1.1–1.9, 1.6.5, 1.6.6 (all components built). **Next: 1.10** (mail-evidence
-runner/CLI), then **Phase 2** = real-fixtures go/no-go gate (`docs/07`). Update this
-pointer as tasks close.
+1.1–1.9, 1.6.5, 1.6.6, 1.11 (offline fixture harness + scorer — A: `.eml`/`.mbox`
+ingestion; B: `invoicing_rules.phase2` runnable scoring vs `expected-ledger.csv`).
+**Next: 1.10** (live mail-evidence runner/CLI). **Phase 2** = drop Avigail's real
+corpus into the 1.11 harness for the go/no-go (`docs/07`). Update this pointer as
+tasks close.
 
 ---
 

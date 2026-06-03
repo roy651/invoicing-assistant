@@ -1,0 +1,5 @@
+price_id,version,effective_from,effective_to,category,item,price_low,price_high,currency,is_range,notes
+2025-web-scrollable-range,2025,2025-01-01,,Web Design,Scrollable Single Page,11000,13200,USD,TRUE,Range; agent must not pick a number
+2025-trade-rollup,2025,2025-01-01,,Trade Shows,Roll-up Standard,400,400,USD,FALSE,
+2025-logo-il,2025,2025-01-01,,Branding,Logo Design,8000,8000,ILS,FALSE,
+2026-logo-il,2026,2026-01-01,,Branding,Logo Design,9000,9000,ILS,FALSE,New 2026 rate

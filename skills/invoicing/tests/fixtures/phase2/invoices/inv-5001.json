@@ -1,0 +1,12 @@
+{
+  "id": "inv-5001",
+  "type": 305,
+  "number": 50001,
+  "client": { "id": "morning-sprig-001" },
+  "linkedDocumentIds": ["pf-rollup-001"],
+  "documentDate": "2026-03-20",
+  "income": [
+    { "description": "------------ ACME ------------", "quantity": 1, "unitPrice": 0.0, "price": 0.0, "currency": "USD", "vat": 0.0 },
+    { "description": "Roll-up banners", "quantity": 3, "unitPrice": 400.0, "price": 1200.0, "currency": "USD", "vat": 0.0 }
+  ]
+}
