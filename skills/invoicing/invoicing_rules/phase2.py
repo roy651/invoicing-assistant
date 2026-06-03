@@ -33,7 +33,6 @@ Run:  uv run python -m invoicing_rules.phase2 <fixtures_root> [YYYY-MM]
 
 from __future__ import annotations
 
-import csv
 import json
 import sys
 from dataclasses import dataclass, field
@@ -117,7 +116,7 @@ def load_invoices(fx: FixtureSet) -> list[dict]:
     if not fx.invoices.exists():
         return docs
     for path in sorted(fx.invoices.glob("*.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict) and "items" in data:
             docs.extend(data["items"])
         elif isinstance(data, dict):
@@ -130,7 +129,7 @@ def load_invoices(fx: FixtureSet) -> list[dict]:
 def load_open_proformas(fx: FixtureSet) -> set[str] | None:
     if not fx.open_proformas:
         return None
-    return set(json.loads(fx.open_proformas.read_text(encoding="utf-8")))
+    return set(json.loads(fx.open_proformas.read_text(encoding="utf-8-sig")))
 
 
 # ── THE MODEL SEAM ───────────────────────────────────────────────────────────
@@ -139,11 +138,17 @@ def load_open_proformas(fx: FixtureSet) -> set[str] | None:
 class Reasoner(Protocol):
     """
     The MATCH/INFER reasoning pass. In production the model performs this in Cowork,
-    reading the unified evidence and the open ledger and writing back, per item:
-    `status_agent`, `completion_evidence`, `confidence`, `qty_proposed`.
+    reading the unified evidence and the open ledger and mutating the ledger in place:
+
+      - for an existing open item, write its agent columns (`status_agent`,
+        `completion_evidence`, `confidence`, `qty_proposed`);
+      - for NEW work found in the evidence but not yet on the ledger, APPEND a new
+        LedgerItem (identity / classification / pricing + agent columns) — SKILL.md's
+        INFER allows this, and item precision/recall is meant to measure exactly it.
 
     It MUST NOT touch the gate columns (`status_confirmed` / `decision` /
-    `qty_approved`) — those are the human gate's. The harness enforces this.
+    `qty_approved`) on any item, new or existing — those are the human gate's. The
+    harness enforces this around the call.
     """
 
     def annotate(
@@ -154,10 +159,15 @@ class Reasoner(Protocol):
 @dataclass
 class ReplayReasoner:
     """
-    Fixture-backed stand-in for the model: applies pre-recorded agent annotations
-    (item_id, status_agent, completion_evidence, confidence, qty_proposed) from a CSV
-    — i.e. "what the model produced" — so the deterministic harness + scorer run with
-    no model and no network.
+    Fixture-backed stand-in for the model: applies "what the model produced" from a
+    ledger-shaped CSV (same columns as the ledger; loaded via load_ledger).
+
+      - A row whose item_id already exists is an ANNOTATION: only the agent columns
+        are copied onto the open item (identity/pricing/gate of the open row are left
+        as they are).
+      - A row with a NEW item_id is an agent-IDENTIFIED item: it is appended in full
+        (identity/classification/pricing + agent columns), with its gate and
+        morning-truth columns forced empty — the agent never bills.
     """
 
     annotations_path: Path
@@ -167,17 +177,23 @@ class ReplayReasoner:
     ) -> None:
         if not self.annotations_path.exists():
             return
-        with self.annotations_path.open(encoding="utf-8-sig", newline="") as fh:
-            rows = {r["item_id"]: r for r in csv.DictReader(fh)}
-        for item in ledger:
-            r = rows.get(item.item_id)
-            if not r:
-                continue
-            item.status_agent = _clean(r.get("status_agent"))
-            item.completion_evidence = _clean(r.get("completion_evidence"))
-            item.confidence = _clean(r.get("confidence"))
-            qty = _clean(r.get("qty_proposed"))
-            item.qty_proposed = float(qty) if qty else None
+        by_id = {it.item_id: it for it in ledger}
+        for row in load_ledger(self.annotations_path):
+            existing = by_id.get(row.item_id)
+            if existing is not None:
+                existing.status_agent = row.status_agent
+                existing.completion_evidence = row.completion_evidence
+                existing.confidence = row.confidence
+                existing.qty_proposed = row.qty_proposed
+            else:
+                # New item found in the evidence — the agent never gates or settles it.
+                row.status_confirmed = None
+                row.decision = None
+                row.qty_approved = None
+                row.qty_billed_actual = None
+                row.morning_doc_ref = None
+                row.proforma_doc_ref = None
+                ledger.append(row)
 
 
 # ── scoring ──────────────────────────────────────────────────────────────────
@@ -332,7 +348,7 @@ def run_harness(
     # ── THE MODEL SEAM ── reasoning pass; assert it never auto-bills.
     gate_before = _snapshot_gate(ledger)
     reasoner.annotate(ledger, evidence)
-    no_auto_bill = _snapshot_gate(ledger) == gate_before
+    no_auto_bill = not _gate_columns_violated(gate_before, ledger)
 
     packet = build_review_packet(
         ledger, profiles, price_book, agreements, billing_month
@@ -347,11 +363,21 @@ def _snapshot_gate(ledger: list[LedgerItem]) -> dict[str, tuple]:
     return {it.item_id: tuple(getattr(it, c) for c in _GATE_COLS) for it in ledger}
 
 
-def _clean(v: str | None) -> str | None:
-    if v is None:
-        return None
-    s = v.strip()
-    return s or None
+def _gate_columns_violated(before: dict[str, tuple], ledger: list[LedgerItem]) -> bool:
+    """
+    True if the reasoning step touched any gate column: changed an existing item's
+    gate columns, or created a NEW item carrying any of them. New items with empty
+    gate columns are fine (the agent identifies work, it does not bill it).
+    """
+    for it in ledger:
+        gate = tuple(getattr(it, c) for c in _GATE_COLS)
+        prior = before.get(it.item_id)
+        if prior is None:
+            if any(g is not None for g in gate):
+                return True
+        elif gate != prior:
+            return True
+    return False
 
 
 def main(argv: list[str]) -> int:

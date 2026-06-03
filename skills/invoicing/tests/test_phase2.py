@@ -21,7 +21,7 @@ from invoicing_rules.phase2 import (
     run_harness,
     score,
 )
-from invoicing_rules.state import LedgerItem
+from invoicing_rules.state import LedgerItem, load_ledger
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "phase2"
 _MONTH = "2026-03"
@@ -111,6 +111,27 @@ def test_harness_end_to_end_passes():
         "no_false_complete",
         "no_auto_bill",
     }
+    # P/R counts the agent-CREATED item (rollup-002), not just annotated rows.
+    pr = next(m for m in report.metrics if m.name == "item_precision_recall")
+    assert "produced=2" in pr.detail
+
+
+def test_reasoner_appends_new_agent_identified_item():
+    """The seam must support NEW work found in evidence, not just annotation of
+    pre-existing rows — and never gate it."""
+    fx = _fx()
+    ledger = load_ledger(fx.opening_ledger)
+    assert "SPRIG-ACME-rollup-002" not in {it.item_id for it in ledger}
+    ReplayReasoner(fx.annotations).annotate(ledger, [])
+    new = next(it for it in ledger if it.item_id == "SPRIG-ACME-rollup-002")
+    assert new.status_agent == "complete"
+    assert new.qty_proposed == 5.0
+    assert new.end_client == "ACME"
+    assert new.price_ref == "2025-trade-rollup"
+    # The agent identifies work; it never sets gate columns.
+    assert new.decision is None
+    assert new.qty_approved is None
+    assert new.status_confirmed is None
 
 
 def test_harness_settles_pending_proforma():
@@ -142,6 +163,22 @@ def test_no_auto_bill_guard_detects_gate_write():
     no_auto = next(m for m in report.metrics if m.name == "no_auto_bill")
     assert no_auto.passed is False
     assert report.passed is False
+
+
+def test_no_auto_bill_guard_detects_gated_new_item():
+    """A NEW item is fine, but not one the agent already gated."""
+
+    class GatingCreator:
+        def annotate(self, ledger, evidence):
+            ledger.append(
+                _item(
+                    "NEW-1", status_agent="complete", decision="bill", qty_approved=1.0
+                )
+            )
+
+    report = run_harness(_fx(), GatingCreator(), billing_month=_MONTH)
+    no_auto = next(m for m in report.metrics if m.name == "no_auto_bill")
+    assert no_auto.passed is False
 
 
 # ── scorer catches each violation ────────────────────────────────────────────

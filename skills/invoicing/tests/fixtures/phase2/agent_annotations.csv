@@ -1,2 +1,3 @@
-item_id,status_agent,completion_evidence,confidence,qty_proposed
-SPRIG-ACME-web-001,in_progress,<inbox-1@host>: next stage approved; <reply-1@host>: invoice to follow,high,0.4
+item_id,bill_to,end_client,description,assignee,item_kind,billing_mode,unit_price,currency,price_source,price_ref,total_qty,qty_billed_to_date,last_billed_month,status_agent,completion_evidence,confidence,qty_proposed,status_confirmed,decision,qty_approved,qty_billed_actual,morning_doc_ref,proforma_doc_ref,notes
+SPRIG-ACME-web-001,SPRIG,,,self,unit_based,,,USD,price_book,,,,,in_progress,<inbox-1@host>: next stage approved; <reply-1@host>: invoice to follow,high,0.4,,,,,,,
+SPRIG-ACME-rollup-002,SPRIG,ACME,Roll-up banners (trade show),self,unit_based,,,USD,price_book,2025-trade-rollup,,,,complete,<inbox-1@host>: requested 5 roll-up banners for the trade show,high,5.0,,,,,,,

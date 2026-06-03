@@ -80,7 +80,10 @@ This is the decisive gate — does extraction work on **real** messy email?
 
 - [ ] Install bridge + skills + connectors on the user's Mac; OAuth Drive; Keychain creds.
 - [ ] Cold start: import history; declare opening balances; set epoch (`02 §A`).
-- [ ] Point at **last month's real emails**; generate a review packet.
+- [ ] Drop the real corpus into the **1.11 harness** layout; run `invoicing_rules.phase2`.
+- [ ] **Confirm the issued-invoice read shape** against one real `search_documents` result
+      (income field names + `documentDate` type) — the invoice fixture is anchored to the
+      bridge's *create* payload; the read shape may differ. Adjust `settle.py` if so.
 - [ ] Compare drafts (dry-run) against the invoices actually issued (`fixtures/`, `07`).
 
 Gate: meet the accuracy targets in `07-acceptance.md`. If yes → Phase 3. If no → fix the
