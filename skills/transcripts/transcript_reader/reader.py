@@ -1,18 +1,22 @@
 """
-Core reader logic — read_folder() and EvidenceRecord.
+Core reader logic — read_folder().
 
-EvidenceRecord is the unified evidence shape for the invoicing rules skill.
-Both imap-fetch (email) and transcript-reader produce records with the same
-fields so 1.7 can reason over a single list without source-type branching.
+EvidenceRecord is imported from mail_evidence (the package that owns the
+unified schema). This module populates the email-specific fields as None/[]
+per the schema contract for transcript-sourced records.
 
-Field mapping vs Message (imap-fetch):
-  EvidenceRecord.id          ← "transcripts/<stem>"        (Message: "INBOX/<uid>")
+Field mapping:
+  EvidenceRecord.id          ← "transcripts/<stem>"
   EvidenceRecord.thread_id   ← same as id (transcripts are not threaded)
-  EvidenceRecord.date        ← from filename / VTT / mtime  (Message: Date header)
-  EvidenceRecord.source      ← "transcript"                 (Message: "email")
+  EvidenceRecord.date        ← from filename / VTT / mtime
+  EvidenceRecord.source      ← "transcript"
+  EvidenceRecord.from_       ← None  (email-only)
+  EvidenceRecord.to          ← []    (email-only)
+  EvidenceRecord.cc          ← []    (email-only)
+  EvidenceRecord.subject     ← None  (email-only)
   EvidenceRecord.participants ← extracted from VTT cues / first lines
-  EvidenceRecord.body_text   ← full normalised text         (Message: body_text)
-  EvidenceRecord.filename    ← original filename            (Message: —)
+  EvidenceRecord.body_text   ← full normalised text
+  EvidenceRecord.filename    ← original filename
 
 VTT parsing:
   WebVTT files (Zoom / Teams cloud transcripts) have cue blocks:
@@ -30,9 +34,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mail_evidence.records import EvidenceRecord  # noqa: F401 (re-exported for callers)
 
 _log = logging.getLogger(__name__)
 
@@ -48,33 +53,6 @@ _DATE_IN_NAME_RE = re.compile(
 _VTT_CUE_RE = re.compile(
     r"^(?:\d{2}:)?\d{2}:\d{2}\.\d{3}\s+-->\s+(?:\d{2}:)?\d{2}:\d{2}\.\d{3}"
 )
-
-
-@dataclass
-class EvidenceRecord:
-    """
-    Unified evidence record consumed by the invoicing rules skill.
-
-    Both email (imap-fetch) and transcripts produce this shape so the rules
-    skill can reason over a single evidence list without source-type branching.
-
-    id:           Stable identifier.  For transcripts: "transcripts/<stem>".
-    thread_id:    Same as id for transcripts (not threaded).
-    date:         UTC-aware datetime.  From filename, VTT header, or file mtime.
-    source:       "email" | "transcript".  Set to "transcript" here.
-    participants: Speakers / participants extracted from the file.  Empty for
-                  plain-text files that have no speaker markup.
-    body_text:    Full normalised text.  For VTT: speaker-prefixed, no cue times.
-    filename:     Original filename (base name only).
-    """
-
-    id: str
-    thread_id: str
-    date: datetime
-    source: str
-    participants: list[str]
-    body_text: str
-    filename: str
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -171,10 +149,15 @@ def _parse_file(path: Path, *, folder_root: Path) -> EvidenceRecord:
     return EvidenceRecord(
         id=record_id,
         thread_id=record_id,  # transcripts are not threaded
-        date=date,
         source="transcript",
-        participants=participants,
+        date=date,
         body_text=body_text,
+        # Email-specific fields: always None/[] for transcripts (§6.6 invariant).
+        from_=None,
+        to=[],
+        cc=[],
+        subject=None,
+        participants=participants,
         filename=path.name,
     )
 
