@@ -110,13 +110,13 @@ def test_harness_end_to_end_passes():
     assert names == {
         "grouping",
         "price_on_resolved",
-        "item_precision_recall",
+        "item_recall",
         "no_false_complete",
         "no_auto_bill",
     }
-    # P/R counts the agent-CREATED item (rollup-002), not just annotated rows.
-    pr = next(m for m in report.metrics if m.name == "item_precision_recall")
-    assert "produced=2" in pr.detail
+    # Recall counts the agent-CREATED item (rollup-002), not just annotated rows.
+    pr = next(m for m in report.metrics if m.name == "item_recall")
+    assert "proposed 2" in pr.detail
 
 
 def test_reasoner_appends_new_agent_identified_item():
@@ -222,7 +222,7 @@ def test_score_catches_low_recall():
     produced = [_item("X", status_agent=None)]
     expected = [_item("X", status_agent="in_progress")]
     report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
-    m = next(m for m in report.metrics if m.name == "item_precision_recall")
+    m = next(m for m in report.metrics if m.name == "item_recall")
     assert m.passed is False
 
 
@@ -232,6 +232,22 @@ def test_score_catches_grouping_mismatch():
     report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
     m = next(m for m in report.metrics if m.name == "grouping")
     assert m.passed is False
+
+
+def test_over_surfacing_does_not_fail_recall_is_the_gate():
+    """The agent surfaces an extra suspicious item not in the oracle (recall-bias). That
+    dips precision but recall stays 1.0, so the run still passes — precision is reported,
+    not gated (docs/07)."""
+    produced = [
+        _item("a", description="Scrollable website", status_agent="complete"),
+        _item("b", description="Speculative extra work", status_agent="complete"),
+    ]
+    expected = [_item("a", description="Scrollable website", status_agent="complete")]
+    report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
+    rec = next(m for m in report.metrics if m.name == "item_recall")
+    assert rec.passed  # recall 1.0 despite the extra surfaced item
+    assert "precision=0.50" in rec.detail
+    assert report.passed  # over-surfacing alone never fails the run
 
 
 def test_score_matches_new_item_by_description_not_id():
@@ -254,8 +270,8 @@ def test_score_matches_new_item_by_description_not_id():
         )
     ]
     report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
-    pr = next(m for m in report.metrics if m.name == "item_precision_recall")
-    assert pr.passed and "P=1.00 R=1.00" in pr.detail  # matched despite different ids
+    pr = next(m for m in report.metrics if m.name == "item_recall")
+    assert pr.passed and "recall=1.00" in pr.detail  # matched despite different ids
     assert next(m for m in report.metrics if m.name == "grouping").passed
 
 
@@ -288,7 +304,7 @@ def test_discover_fixtures_optionals_absent_on_cold_start(tmp_path):
     assert {m.name for m in report.metrics} == {
         "grouping",
         "price_on_resolved",
-        "item_precision_recall",
+        "item_recall",
         "no_false_complete",
         "no_auto_bill",
     }
