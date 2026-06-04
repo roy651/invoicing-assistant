@@ -11,20 +11,28 @@ the system never issues or sends anything itself.
 
 ## Status
 
-Design / pre-implementation. The specification under [`docs/`](./docs) is complete
-enough to implement against. Build order and acceptance gates are in
-[`docs/06-build-plan.md`](./docs/06-build-plan.md).
+**Implemented and validated end-to-end — including a real (reverted) production
+proforma write.** The full loop runs on live data: multi-account email fetch →
+settle → reason → price → draft proformas. Validation: blind March recall ~0.83,
+live May ~11–12/13, settlement 16/18 on real invoices.
+
+- **Current state, gaps, and roadmap:** [`docs/STATUS.md`](./docs/STATUS.md)
+- **How to operate a monthly run:** [`docs/RUNBOOK.md`](./docs/RUNBOOK.md)
+- The `docs/0x-*.md` files are the original component specs (read the one named in a task).
 
 ## What's here
 
 | Path | What it is |
 | --- | --- |
 | `CLAUDE.md` | Always-on context for Claude Code. Start here if you are an agent. |
-| `docs/` | The specification. Read the doc named in a task before touching its code. |
-| `morning-bridge/` | (to build) Hardened, drafts-only MCP wrapper for the morning API. |
-| `skills/invoicing/` | (to build) The Cowork skill: the monthly reasoning + orchestration. |
-| `skills/imap-fetch/` | (to build) Read-only IMAP fetch skill. |
-| `sheets/` | (to build) Templates + price-list normalizers (PDF/Sheet → Price Book). |
+| `docs/STATUS.md`, `docs/RUNBOOK.md` | Live project state + the operator runbook. |
+| `docs/` | Component specs (`0x-*.md`). Read the doc named in a task before touching its code. |
+| `morning-bridge/` | Hardened, drafts-only wrapper for the morning API (type-300 hard-lock). |
+| `skills/invoicing/` | The monthly reasoning rules + orchestration (settle / price / handoff / phase2 harness). |
+| `skills/mail-evidence/` | Portable email layer: multi-account IMAP fetch, conditioning, threading, the live runner. |
+| `skills/transcripts/` | Call-transcript reader (unified into the same evidence stream). |
+| `scripts/` | `fetch_invoices.py` (read-only invoice pull), `project_ledger.py` (mechanical oracle / opening ledger). |
+| `sheets/` | Price-list normalizers (PDF/Sheet → Price Book). |
 | `fixtures/` | Local-only test data (git-ignored). Real correspondence/invoices live here. |
 
 ## Core safety properties

@@ -8,12 +8,14 @@ architectural moments.
 
 ## Current phase
 
-**Phase 1 — components.** Phase 0 preconditions all confirmed (2026-05-30). Done:
-1.1–1.9, 1.6.5, 1.6.6, 1.11 (offline fixture harness + scorer — A: `.eml`/`.mbox`
-ingestion; B: `invoicing_rules.phase2` runnable scoring vs `expected-ledger.csv`).
-**Next: 1.10** (live mail-evidence runner/CLI). **Phase 2** = drop Avigail's real
-corpus into the 1.11 harness for the go/no-go (`docs/07`). Update this pointer as
-tasks close.
+**Phase 1 + Phase 2 complete — the full loop is validated end-to-end on live data,
+including a real (reverted) production proforma write (2026-06-04).** All components
+(1.1–1.11, the multi-account live runner, the mechanical oracle/projector, and the
+proforma-as-gate CREATE) are built and committed; the blind go/no-go runs passed
+(March ~0.83, live May ~11–12/13, settlement 16/18). **The live current state, gaps,
+deferred work, and roadmap now live in [`STATUS.md`](./STATUS.md); operating
+procedure in [`RUNBOOK.md`](./RUNBOOK.md).** Next checkpoint: a supervised
+end-of-June run. The task table below is the historical build record.
 
 ---
 
