@@ -171,6 +171,25 @@ subcontractor-CC confirmations) for whatever status you assert.
 
 Never touch `status_confirmed` / `decision` / `qty_approved` (invariant 3).
 
+## Step 3b — AGREEMENTS from email (price overrides)
+
+The Price Book is the default price (`price_source = price_book`). Override it ONLY when
+**this batch's** evidence contains an explicit price agreement — Avigail names a price,
+discount, or surcharge AND the client agrees on the thread. When you find one:
+
+- Append an Agreement (the `agreements` input) with the agreed price, the item/scope it
+  covers, and `source_ref` citing the evidence id(s) + a short quote.
+- `confidence = confirmed` ONLY when **both sides** clearly agree in the thread; a
+  one-sided or ambiguous mention is `confidence = detected`, which `resolve_all` treats
+  as unresolved (the human prices it).
+- Set the item's `price_source = negotiated` and `price_ref` = that agreement's id.
+
+Do NOT fabricate an agreement to force a price to resolve, and do NOT carry one from
+memory: if the agreement was made in a prior period and is not in this batch's evidence,
+the item resolves **unresolved** and is surfaced flagged. A confirmed agreement is still
+only a draft input — the gate reviews it, and its price is traceable to the cited email,
+not invented (invariant 4).
+
 ## Step 4 — PRICE
 
 Resolve each assessed item's price mechanically — do not price by hand:
