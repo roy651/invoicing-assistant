@@ -264,7 +264,9 @@ def test_non_enum_status_confirmed_excluded(status):
 # ── blockers: never invent a price; never bill without a morning client ──────
 
 
-def test_unresolved_price_raises():
+def test_unresolved_price_surfaces_at_zero():
+    """An unresolved price is surfaced in the proforma at 0 with a marker (Avigail
+    prices it at conversion), not omitted and never blocking the whole proforma."""
     profiles, pb, agrs = _refs()
     ranged = _item(
         "SPRIG-ACME-range-001",
@@ -274,8 +276,14 @@ def test_unresolved_price_raises():
         price_ref="2025-web-scrollable-range",  # is_range, no unit_price → unresolved
         qty_approved=1.0,
     )
-    with pytest.raises(ValueError, match="SPRIG-ACME-range-001"):
-        build_proforma_requests([ranged], profiles, pb, agrs, _MONTH)
+    reqs = build_proforma_requests([ranged], profiles, pb, agrs, _MONTH)
+    assert len(reqs) == 1
+    # the subtitle line + the unresolved item line, the latter at price 0 + marker
+    item_line = next(
+        ln for ln in reqs[0].lines if "PRICE UNRESOLVED" in ln["description"]
+    )
+    assert item_line["unit_price"] == 0.0
+    assert item_line["quantity"] == 1.0
 
 
 def test_missing_morning_client_id_raises():
@@ -426,6 +434,22 @@ def test_create_and_record_persists_each_proforma(tmp_path):
     reloaded = {it.item_id: it for it in load_ledger(out)}
     assert reloaded["SPRIG-ACME-web-001"].proforma_doc_ref == "doc-ACME"
     assert reloaded["SPRIG-BETA-001"].proforma_doc_ref == "doc-BETA"
+
+
+def test_create_and_record_persists_when_nothing_billed(tmp_path):
+    """A cycle that bills nothing still writes the ledger, so surfaced-but-unbilled
+    items (carried-forward work) persist instead of being rediscovered cold."""
+    out = tmp_path / "ledger.csv"
+    surfaced = _item(
+        "SPRIG-ACME-open-001",
+        "SPRIG",
+        end_client="ACME",
+        description="In-progress brandbook",
+        status_agent="in_progress",
+    )
+    results = create_and_record(None, [], [surfaced], out, create_fn=lambda c, r: {})
+    assert results == []
+    assert {it.item_id for it in load_ledger(out)} == {"SPRIG-ACME-open-001"}
 
 
 def test_create_and_record_persists_before_next_request(tmp_path):

@@ -101,9 +101,10 @@ def build_proforma_requests(
     Build the grouped proforma requests for all gate-approved items.
 
     Selects items that are managed, gate-approved (`decision` in {bill, partial})
-    and have `qty_approved > 0`. Raises ValueError listing every blocker (missing
-    profile / morning_client_id / unresolved price) — all-or-nothing per run, so a
-    bad row never produces a half-built or mispriced draft.
+    and have `qty_approved > 0`. An item whose price did NOT resolve is still placed in
+    the proforma but **priced at 0** with a marker — Avigail prices it at conversion (the
+    real gate), and an omitted line can't be fixed. Only a structural blocker (no
+    morning_client_id — can't address the document) raises, all-or-nothing per run.
     """
     billable = [item for item in ledger if _is_billable(item, profiles)]
     if not billable:
@@ -118,9 +119,6 @@ def build_proforma_requests(
             blockers.append(
                 f"{item.item_id}: client {item.bill_to!r} has no morning_client_id"
             )
-        pr = price_results[item.item_id]
-        if not pr.resolved or pr.unit_price is None:
-            blockers.append(f"{item.item_id}: {pr.flag or 'price did not resolve'}")
     if blockers:
         raise ValueError(
             "Cannot build proformas — resolve these before the gate hands off:\n  "
@@ -148,11 +146,17 @@ def build_proforma_requests(
         for item in items_sorted:
             pr = price_results[item.item_id]
             qty = item.qty_approved or 0.0
+            desc = annotate_description(item, qty)
+            if pr.unit_price is None:
+                # Unresolved price → surface at 0 with a marker (distinguishes it from
+                # the zero-priced end-client subtitle line) so it lands on Avigail's
+                # table to be priced at conversion, rather than blocking the proforma.
+                desc = f"{desc}  [PRICE UNRESOLVED — set at issuance]"
             lines.append(
                 {
-                    "description": annotate_description(item, qty),
+                    "description": desc,
                     "quantity": qty,
-                    "unit_price": pr.unit_price,
+                    "unit_price": pr.unit_price if pr.unit_price is not None else 0.0,
                 }
             )
 
@@ -248,6 +252,11 @@ def create_and_record(
         apply_results(ledger, request, result)
         write_ledger(ledger, ledger_path)
         results.append(result)
+    if not requests:
+        # Nothing billed this cycle, but surfaced-but-unbilled items (carried-forward
+        # work, deferrals) must still persist as open ledger rows so next cycle
+        # re-evaluates them instead of rediscovering them cold.
+        write_ledger(ledger, ledger_path)
     return results
 
 
