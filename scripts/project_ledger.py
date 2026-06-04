@@ -185,6 +185,31 @@ def project(invoices_dir: Path, profiles_path: Path, month: str) -> list[LedgerI
     return items
 
 
+def to_opening(items: list[LedgerItem], month: str) -> list[LedgerItem]:
+    """Collapse projected billed-lines into an OPENING-ledger shape for the next month:
+    group by (bill_to, end_client, normalised description), sum the billed quantity into
+    qty_billed_to_date, and CLEAR the agent columns (status_agent/qty_proposed) so the
+    next month's reasoning re-evaluates each carry-forward item rather than inheriting a
+    verdict. Identity + cumulative-billed is what carries forward; the judgement does not."""
+    groups: dict[tuple, LedgerItem] = {}
+    qty: dict[tuple, float] = {}
+    for it in items:
+        key = (it.bill_to, (it.end_client or "").lower(), _slug(it.description))
+        qty[key] = qty.get(key, 0.0) + (it.qty_proposed or 0.0)
+        if key not in groups:
+            groups[key] = it
+    opening: list[LedgerItem] = []
+    for key, it in groups.items():
+        it.qty_billed_to_date = round(qty[key], 4) or None
+        it.last_billed_month = month
+        it.status_agent = None
+        it.qty_proposed = None
+        it.completion_evidence = None
+        it.confidence = None
+        opening.append(it)
+    return opening
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Project issued invoices → expected_ledger.csv"
@@ -199,11 +224,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--out", default=str(_ROOT / "fixtures" / "expected_ledger.generated.csv")
     )
+    ap.add_argument(
+        "--as-opening",
+        action="store_true",
+        help="Emit an OPENING ledger (collapsed carry-forward) instead of a per-line oracle.",
+    )
     args = ap.parse_args(argv)
 
     items = project(Path(args.invoices), Path(args.profiles), args.month)
+    if args.as_opening:
+        items = to_opening(items, args.month)
     write_ledger(items, Path(args.out))
-    print(f"Projected {len(items)} line(s) for {args.month} → {args.out}")
+    kind = "opening item" if args.as_opening else "oracle line"
+    print(f"Projected {len(items)} {kind}(s) for {args.month} → {args.out}")
     for it in items:
         print(
             f"  {it.bill_to}/{it.end_client}: {it.description!r} @ {it.unit_price} [{it.status_agent}]"
