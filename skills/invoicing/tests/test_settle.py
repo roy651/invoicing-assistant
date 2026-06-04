@@ -325,6 +325,33 @@ def test_settle_subtitle_line_not_treated_as_orphan():
     assert len(ledger) == 1  # no orphan appended for the subtitle
 
 
+def test_settle_content_match_tolerates_typo_and_affixes():
+    """Real invoice lines carry end-client prefixes, payment-stage suffixes, and typos
+    ('Landind' vs 'Landing'). Token-overlap content-matches them where startswith could
+    not. linkedDocuments empty (as on every real invoice) → forces the content path."""
+    item = _pending(
+        "SPRIG-VERGE-rovo-landing",
+        "SPRIG",
+        "pf-1",
+        end_client="Verge",
+        description="RoVo - Landing page",
+        item_kind="fixed_quote",
+        billing_mode="partial",
+        total_qty=1.0,
+        qty_billed_to_date=0.6,
+        qty_approved=0.4,
+    )
+    inv = _invoice(
+        "inv-1",
+        "morning-sprig-001",
+        [],  # no proforma link → only content-matching can settle it
+        [_line("RoVo - Landind page* - 2nd & last payment", 0.4, 3500)],
+    )
+    report = settle_ledger([item], [inv], _profiles())
+    assert report.settled == ["SPRIG-VERGE-rovo-landing"]
+    assert item.qty_billed_to_date == 1.0
+
+
 # ── content fallback (linkedDocumentIds absent) ──────────────────────────────
 
 

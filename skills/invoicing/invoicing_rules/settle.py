@@ -29,11 +29,15 @@ Settlement uses only read endpoints; the drafts-only contract holds.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from invoicing_rules.state import ClientProfile, LedgerItem
 
 _EPS = 1e-9
+# Content-match threshold: a line matches an item when at least this fraction of the
+# item's description tokens appear in the line's description (best-overlap line wins).
+_MATCH_MIN_RATIO = 0.6
 
 
 @dataclass
@@ -223,25 +227,38 @@ def _find_settlement(
     return None, None
 
 
+def _tokens(text: str) -> set[str]:
+    """Alphanumeric tokens (len >= 2), lowercased — for description token-overlap."""
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 2}
+
+
 def _match_line_index(
     item: LedgerItem, doc: dict, consumed: set[tuple[str, int]]
 ) -> int | None:
     """
-    First unconsumed, non-zero-priced income line whose description matches.
+    Best unconsumed, non-zero-priced income line whose description token-overlaps the
+    item's, requiring >= _MATCH_MIN_RATIO of the item's tokens.
 
-    Limitation: startswith is first-match-wins. If two items share a description
-    prefix on the same invoice, the first in iteration order claims the first line.
-    Revisit against real fixtures (Phase 2) if same-prefix collisions occur.
+    Token-overlap (not startswith) is what real invoice lines need: they carry end-client
+    prefixes, payment-stage suffixes, and typos ("RoVo - Landind page* - 1st payment" vs
+    "RoVo - Landing page") — the item's remaining tokens still carry the match. Picking the
+    highest-overlap line (not first) avoids mis-claiming a same-client neighbour.
     """
+    item_tokens = _tokens(item.description)
+    if not item_tokens:
+        return None
+    best_idx, best_ratio = None, 0.0
     for idx, line in enumerate(doc.get("income", [])):
         if (str(doc["id"]), idx) in consumed:
             continue
         if _is_zero_priced(line):
             continue
-        desc = str(line.get("description", ""))
-        if item.description and desc.startswith(item.description):
-            return idx
-    return None
+        ratio = len(item_tokens & _tokens(str(line.get("description", "")))) / len(
+            item_tokens
+        )
+        if ratio > best_ratio:
+            best_ratio, best_idx = ratio, idx
+    return best_idx if best_ratio >= _MATCH_MIN_RATIO else None
 
 
 def _recompute_status(item: LedgerItem) -> None:
