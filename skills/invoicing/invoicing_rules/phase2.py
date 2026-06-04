@@ -51,7 +51,7 @@ from mail_evidence import (
 from mail_evidence.records import EvidenceRecord, RelevanceDecision, Thread
 
 from invoicing_rules.evidence import unify
-from invoicing_rules.packet import ProposedLine, ReviewPacket, build_review_packet
+from invoicing_rules.packet import ReviewPacket, build_review_packet
 from invoicing_rules.settle import SettlementReport, settle_ledger
 from invoicing_rules.state import (
     LedgerItem,
@@ -367,6 +367,50 @@ def _index(items: list[LedgerItem]) -> tuple[dict[tuple, LedgerItem], list[tuple
     return idx, collisions
 
 
+# Token-overlap matching (mirrors settle.py): real invoice descriptions carry typos
+# ("Landind"), descriptive suffixes ("- design"), and Hebrew — exact-norm equality
+# reads those faithful variants as false misses. `[^\W_]+` is Unicode-aware so Hebrew
+# tokens survive (the alnum-only `_norm` would strip them).
+_MATCH_MIN_RATIO = 0.6
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _tokens(text: str | None) -> set[str]:
+    return {t for t in _WORD.findall((text or "").lower()) if len(t) >= 2}
+
+
+def _pair_items(left: list, right: list) -> list[tuple]:
+    """Greedily pair objects (each with .bill_to + .description) one-to-one by token
+    overlap within the same bill_to, requiring ratio ≥ _MATCH_MIN_RATIO of the larger
+    token set. Highest-overlap pairs bind first; exact matches score 1.0."""
+    scored: list[tuple[float, int, int]] = []
+    left_tokens = [_tokens(x.description) for x in left]
+    right_tokens = [_tokens(y.description) for y in right]
+    for li, lt in enumerate(left_tokens):
+        if not lt:
+            continue
+        for ri, rt in enumerate(right_tokens):
+            if not rt or left[li].bill_to != right[ri].bill_to:
+                continue
+            inter = len(lt & rt)
+            if not inter:
+                continue
+            ratio = inter / max(len(lt), len(rt))
+            if ratio >= _MATCH_MIN_RATIO:
+                scored.append((ratio, li, ri))
+    scored.sort(key=lambda s: (-s[0], s[1], s[2]))
+    used_l: set[int] = set()
+    used_r: set[int] = set()
+    pairs: list[tuple] = []
+    for _ratio, li, ri in scored:
+        if li in used_l or ri in used_r:
+            continue
+        used_l.add(li)
+        used_r.add(ri)
+        pairs.append((left[li], right[ri]))
+    return pairs
+
+
 def score(
     produced: list[LedgerItem],
     expected: list[LedgerItem],
@@ -382,19 +426,26 @@ def score(
     Recall is the gate (docs/07); precision is reported but does not gate — the agent
     deliberately over-surfaces suspicious items for the human to prune at conversion.
     """
-    prod, prod_col = _index(produced)
-    exp, exp_col = _index(expected)
-    both = [k for k in prod if k in exp]
+    _, prod_col = _index(produced)
+    _, exp_col = _index(expected)
+    item_pairs = _pair_items(produced, expected)
     metrics: list[Metric] = []
 
-    # 1. Grouping 100% — end_client of matched items (bill_to is already in the key).
-    gmis = [k for k in both if prod[k].end_client != exp[k].end_client]
+    def _key(it) -> tuple:
+        return (it.bill_to, _norm(it.description) or it.description.lower())
+
+    # 1. Grouping 100% — end_client of matched (produced, expected) pairs.
+    gmis = [(p, e) for p, e in item_pairs if p.end_client != e.end_client]
     metrics.append(
         Metric(
             "grouping",
             not gmis,
-            f"{len(both) - len(gmis)}/{len(both)} match"
-            + (f"; end_client mismatch={sorted(gmis)}" if gmis else ""),
+            f"{len(item_pairs) - len(gmis)}/{len(item_pairs)} match"
+            + (
+                f"; end_client mismatch={sorted(_key(e) for _, e in gmis)}"
+                if gmis
+                else ""
+            ),
         )
     )
 
@@ -402,43 +453,44 @@ def score(
     #    0-priced line is the unresolved-price marker (docs/08 §5a), not a resolved price,
     #    so it is excluded here while still counting as an identified item below. Report
     #    resolved-of-proposed so a clean score on few resolved can't read as a full pass.
-    packet_lines: dict[tuple, ProposedLine] = {
-        (ln.bill_to, _norm(ln.description)): ln
-        for bt in packet.groups
-        for ec in bt.end_client_groups
-        for ln in ec.lines
-    }
-    resolved = [k for k, ln in packet_lines.items() if ln.unit_price]
-    pmis = [
-        k
-        for k in resolved
-        if k in exp
-        and (packet_lines[k].unit_price, packet_lines[k].price_ref)
-        != (exp[k].unit_price, exp[k].price_ref)
+    #    price_ref is compared only when the oracle carries one — a mechanically-projected
+    #    oracle has no price_ref (not on the invoice), so unit_price is the real check.
+    packet_lines = [
+        ln for bt in packet.groups for ec in bt.end_client_groups for ln in ec.lines
     ]
+    packet_pairs = _pair_items(packet_lines, expected)
+    resolved_pairs = [(ln, e) for ln, e in packet_pairs if ln.unit_price]
+    pmis = [
+        (ln, e)
+        for ln, e in resolved_pairs
+        if ln.unit_price != e.unit_price
+        or (e.price_ref and ln.price_ref != e.price_ref)
+    ]
+    n_resolved = len([ln for ln in packet_lines if ln.unit_price])
     metrics.append(
         Metric(
             "price_on_resolved",
             not pmis,
-            f"{len(resolved) - len(pmis)}/{len(resolved)} resolved prices match; "
-            f"{len(resolved)} of {len(packet_lines)} proposed items resolved"
-            + (f"; mismatch={sorted(pmis)}" if pmis else ""),
+            f"{len(resolved_pairs) - len(pmis)}/{len(resolved_pairs)} resolved prices match; "
+            f"{n_resolved} of {len(packet_lines)} proposed items resolved"
+            + (f"; mismatch={sorted(_key(e) for _, e in pmis)}" if pmis else ""),
         )
     )
 
     # 3. Item recall ≥ 0.90 — the gate (docs/07). Precision is informational: the agent
     #    over-surfaces on purpose, so a moderate dip is expected; a very low value = noise.
-    prod_items = {k for k, it in prod.items() if it.status_agent}
-    exp_items = {k for k, it in exp.items() if it.status_agent}
-    inter = prod_items & exp_items
-    precision = len(inter) / len(prod_items) if prod_items else 1.0
-    recall = len(inter) / len(exp_items) if exp_items else 1.0
-    extra = len(prod_items) - len(inter)
+    prod_items = [p for p in produced if p.status_agent]
+    exp_items = [e for e in expected if e.status_agent]
+    caught = [(p, e) for p, e in item_pairs if p.status_agent and e.status_agent]
+    inter = len(caught)
+    precision = inter / len(prod_items) if prod_items else 1.0
+    recall = inter / len(exp_items) if exp_items else 1.0
+    extra = len(prod_items) - inter
     metrics.append(
         Metric(
             "item_recall",
             recall >= 0.90,
-            f"recall={recall:.2f} (caught {len(inter)}/{len(exp_items)} billed); "
+            f"recall={recall:.2f} (caught {inter}/{len(exp_items)} billed); "
             f"precision={precision:.2f} (proposed {len(prod_items)}, "
             f"{extra} beyond billed — surfaced for the gate)",
         )
@@ -459,9 +511,9 @@ def score(
 
     # 4. Zero false "complete" — agent never marks complete what the oracle says isn't.
     false_complete = [
-        k
-        for k in both
-        if prod[k].status_agent == "complete" and exp[k].status_agent != "complete"
+        (p, e)
+        for p, e in item_pairs
+        if p.status_agent == "complete" and e.status_agent != "complete"
     ]
     metrics.append(
         Metric(
@@ -469,7 +521,7 @@ def score(
             not false_complete,
             "none"
             if not false_complete
-            else f"{len(false_complete)}: {sorted(false_complete)}",
+            else f"{len(false_complete)}: {sorted(_key(e) for _, e in false_complete)}",
         )
     )
 

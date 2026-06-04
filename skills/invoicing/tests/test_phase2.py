@@ -311,6 +311,72 @@ def test_score_matches_new_item_by_description_not_id():
     assert next(m for m in report.metrics if m.name == "grouping").passed
 
 
+# ── token-overlap matching (real invoice descriptions) ───────────────────────
+
+
+def test_score_matches_typo_and_suffix_variants():
+    """A mechanical oracle is faithful to the invoice: typos ("Landind") and
+    descriptive suffixes ("- design") must still match the agent's clean description
+    via token overlap, not read as recall misses."""
+    produced = [
+        _item("a", description="RoVo - Landing page", status_agent="complete"),
+        _item("b", description="Business Card", status_agent="complete"),
+    ]
+    expected = [
+        _item("x", description="RoVo - Landind page", status_agent="complete"),
+        _item("y", description="Business Card - design", status_agent="complete"),
+    ]
+    report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
+    rec = next(m for m in report.metrics if m.name == "item_recall")
+    assert rec.passed and "recall=1.00" in rec.detail
+
+
+def test_score_matches_hebrew_description():
+    """`_norm` strips Hebrew; token matching is Unicode-aware so a Hebrew direct-client
+    line (IVORY) still matches instead of vanishing."""
+    produced = [
+        _item(
+            "a",
+            bill_to="IVORY",
+            description="IFU עיצוב 12 שפות",
+            status_agent="complete",
+        )
+    ]
+    expected = [
+        _item(
+            "x",
+            bill_to="IVORY",
+            description="IFU עיצוב ל 12 שפות",
+            status_agent="complete",
+        )
+    ]
+    report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
+    rec = next(m for m in report.metrics if m.name == "item_recall")
+    assert rec.passed and "recall=1.00" in rec.detail
+
+
+def test_price_ref_wildcard_when_oracle_has_no_ref():
+    """A mechanically-projected oracle has no price_ref (not on the invoice). The price
+    metric must compare unit_price only in that case, not fail on a null ref."""
+    produced = [_item("a", description="Pocket Folder", status_agent="complete")]
+    expected = [
+        _item(
+            "x",
+            description="Pocket Folder",
+            status_agent="complete",
+            unit_price=1100.0,
+            price_ref=None,
+        )
+    ]
+    packet = _packet_with_line(
+        "a", unit_price=1100.0, price_ref="2025-marketing-folder"
+    )
+    packet.groups[0].end_client_groups[0].lines[0].description = "Pocket Folder"
+    report = score(produced, expected, packet, no_auto_bill=True)
+    price = next(m for m in report.metrics if m.name == "price_on_resolved")
+    assert price.passed, price.detail
+
+
 # ── fixture discovery tolerance (cold-start) ─────────────────────────────────
 
 
