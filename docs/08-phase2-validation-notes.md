@@ -172,11 +172,45 @@ The reasoning-pass annotations and the oracle must therefore use identical ids f
 same work. A semantic (description/client) match would not have this coupling. This was
 not changed.
 
-## 8. Not yet done
+## 8. Changes since the first review handoff
 
-- The model-reasoning pass (reading the May threads → `agent_annotations.csv`).
-- Any score.
-- End-to-end settlement on real invoices (Stage 2).
+- Scorer matches produced↔expected by **(bill_to, normalized description)**, not `item_id`
+  (the model assigns its own ids to new items). Duplicate keys are surfaced as an
+  informational `key_collisions` line, never silently overwritten.
+- **Recall is the gate; precision is informational** (docs/07 updated): the agent
+  deliberately over-surfaces suspicious items for the human to prune at conversion. Error
+  hierarchy reordered — a missed item is worst; a false "complete" is least severe (caught
+  at conversion).
+- Price metric reports **resolved-of-proposed** so a clean score on few resolved can't
+  read as a full pass.
+- SKILL.md **Step 3b** added: the agent creates an Agreement from an explicit in-batch
+  email price agreement (confirmed only if both sides clearly agree), else unresolved.
+- Unresolved-price lines are surfaced (not omitted/guessed); the CREATE-side "price 0"
+  rendering is deferred to a post-run task (does not affect the harness score).
+
+## 9. First reasoning-pass run (result + caveats)
+
+Ran the harness on the May corpus with a hand-authored `agent_annotations.csv` produced by
+reading the threads. Result: **PASS** — grouping 13/13; price 12/12 resolved match (12 of
+15 proposed resolved; 3 unresolved = IVORY IFU, RoVo additional charge, TurnCare card);
+item_recall 0.92 (12/13; the miss is a "$425 payment completion" poster with no May email);
+precision 0.80 (3 recall-bias extras surfaced); no false complete; no auto-bill.
+
+What it does NOT establish, and should be weighed by the reviewer:
+- **The oracle and the annotations were both authored by the same assistant.** Price and
+  description-match agreement is therefore partly circular; the independent signal is
+  completion-from-email and recall, not the price metric.
+- **Settlement was a no-op** this run (§6) — the §3 read-shape fixes are unit-tested only.
+- **Precision is not truly measured** — 0.80 only counts surfaced extras, not whether they
+  were good surfacing (that needs the user's actual prune decisions).
+
+Files to review for §9: `agent_annotations.csv` (the extraction, with per-item evidence
+citations in `completion_evidence`) alongside `expected_ledger.csv`.
+
+## 10. Not yet done
+
+- End-to-end settlement on real invoices (Stage 2); a second validation month (would avoid
+  the oracle-circularity by scoring against independent next-month invoices).
 
 ---
 
