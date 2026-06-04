@@ -29,14 +29,15 @@ cycle from `02-reconciliation.md`. This doc is the spec; the deliverable is the 
    `qty_proposed` per the inference rules in `02 §E`.
 5. **Price.** Resolve each item's price from Price Book (`price_ref` + version) or a
    `confirmed` Agreement. Ranges/unknowns with no `unit_price` → mark unresolved (flag).
-6. **Propose.** Emit the review packet (below).
-7. **Gate.** User reviews/trims/edits qty/adds; sets `status_confirmed`, `decision`,
-   `qty_approved`.
-8. **Create.** For approved items, call the bridge to create **drafts**, grouped per
-   `01 §5` (one per end-client for agencies; subtitle line; progress annotations; language/
-   currency/VAT from Client Profile).
-9. **Record.** Write `qty_approved` + draft refs to the ledger. Leave `qty_billed_actual`
-   empty — next cycle's settlement fills it from the issued doc.
+6. **Propose.** Emit the review packet (below) — the agent's proposal, for transparency.
+7. **Create.** Create **draft proformas** autonomously from the agent's proposal
+   (`status_agent` ∈ {in_progress, complete} and `qty_proposed > 0`), grouped per `01 §5`
+   (one per end-client for agencies; subtitle line; progress annotations; language/
+   currency/VAT from Client Profile). Drafts only (type 300 — non-fiscal, deletable).
+8. **Record.** Write the proforma ids (`proforma_doc_ref`) to the ledger. Leave
+   `qty_billed_actual` empty — next cycle's settlement fills it from the issued doc.
+9. **Gate (human).** The conversion IS the gate: Avigail reviews/trims/edits/prices every
+   line at **proforma → invoice conversion** in morning. The agent never issues or converts.
 
 ## Review packet (what the gate sees)
 
@@ -60,7 +61,8 @@ suggestions) are front and center. The packet is a proposal; the user's edits ar
 
 - Drafts only; the gate decides; morning is truth; never invent prices; per-item evidence.
   (Full list in `CLAUDE.md`.)
-- Never auto-set `status_confirmed`. Never bill without `qty_approved`.
+- Drafts only — the agent creates proformas but **never issues or converts**; the human
+  gate is the conversion. Create only items with a billable `status_agent` + `qty_proposed > 0`.
 - `managed_by_agent=false` clients are never proposed (their docs are handled only by
   settlement's silent orphan path).
 - The partial *fraction* is the user's call; the agent suggests and flags, never asserts.

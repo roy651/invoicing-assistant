@@ -1,11 +1,12 @@
 """
 Gate → create_proforma handoff + ledger record — task 1.8.
 
-This is steps 8 (CREATE) and 9 (RECORD) of the monthly cycle in docs/05. It runs
-AFTER the human gate has written `status_confirmed`, `decision`, and `qty_approved`
-onto the ledger. It does NOT decide what to bill — it mechanically turns
-gate-approved ledger rows into morning `create_proforma` requests, and records the
-returned proforma ids back onto the ledger.
+This is steps 8 (CREATE) and 9 (RECORD) of the monthly cycle in docs/05. Under
+proforma-as-gate (CLAUDE.md invariant 2) it turns the AGENT's own proposals
+(`status_agent` + `qty_proposed`) into morning `create_proforma` requests — DRAFTS
+only — and records the returned proforma ids back onto the ledger. The human gate is
+Avigail's review at proforma→invoice CONVERSION in morning, not a pre-approval column
+here; the agent never issues or converts.
 
 Grouping and payload mapping follow docs/01 §5:
   - Group approved items by `bill_to`.
@@ -42,11 +43,9 @@ from invoicing_rules.state import (
 )
 from morning_bridge.drafts import create_proforma
 
-# Decisions that result in a billed line. "defer"/"hold" are not billed.
-_BILLABLE_DECISIONS = {"bill", "partial"}
-
-# status_confirmed is a completion enum (docs/01), empty until the gate confirms.
-_CONFIRMED_STATUSES = {"not_started", "in_progress", "complete"}
+# Proforma-as-gate: the AGENT's inferred completion drives creation. "not_started"
+# never bills (no work yet); "in_progress"/"complete" do (partial or full).
+_BILLABLE_AGENT_STATUSES = {"in_progress", "complete"}
 
 # Subtitle separator format (agency end-client header), per docs/01 §5.
 _SUBTITLE_DASHES = "------------"
@@ -100,8 +99,9 @@ def build_proforma_requests(
     """
     Build the grouped proforma requests for all gate-approved items.
 
-    Selects items that are managed, gate-approved (`decision` in {bill, partial})
-    and have `qty_approved > 0`. An item whose price did NOT resolve is still placed in
+    Selects items that are managed and have a billable agent proposal
+    (`status_agent` in {in_progress, complete} and `qty_proposed > 0`). An item whose
+    price did NOT resolve is still placed in
     the proforma but **priced at 0** with a marker — Avigail prices it at conversion (the
     real gate), and an omitted line can't be fixed. Only a structural blocker (no
     morning_client_id — can't address the document) raises, all-or-nothing per run.
@@ -145,7 +145,7 @@ def build_proforma_requests(
             lines.append(_subtitle_line(end_client))
         for item in items_sorted:
             pr = price_results[item.item_id]
-            qty = item.qty_approved or 0.0
+            qty = item.qty_proposed or 0.0
             desc = annotate_description(item, qty)
             if pr.unit_price is None:
                 # Unresolved price → surface at 0 with a marker (distinguishes it from
@@ -273,14 +273,13 @@ def _is_billable(item: LedgerItem, profiles: dict[str, ClientProfile]) -> bool:
     # proforma_doc_ref, so a re-opened partial item becomes billable again next cycle.
     if item.proforma_doc_ref:
         return False
-    # The gate writes status_confirmed + decision + qty_approved together; require a
-    # real status_confirmed enum value so a half-written gate row is never billed.
-    # Positive membership, NOT truthiness — a stray "FALSE" string can't slip through.
-    if item.status_confirmed not in _CONFIRMED_STATUSES:
+    # Proforma-as-gate (CLAUDE.md invariant 2): the agent creates DRAFT proformas from
+    # its own proposal — status_agent (inferred completion) + qty_proposed (>0). The
+    # human gate is Avigail's review at proforma→invoice CONVERSION in morning, not a
+    # pre-approval column here. Positive enum membership, not truthiness.
+    if item.status_agent not in _BILLABLE_AGENT_STATUSES:
         return False
-    if item.decision not in _BILLABLE_DECISIONS:
-        return False
-    return item.qty_approved is not None and item.qty_approved > 0
+    return item.qty_proposed is not None and item.qty_proposed > 0
 
 
 def _subtitle_line(end_client: str) -> dict:

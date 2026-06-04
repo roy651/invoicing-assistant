@@ -56,6 +56,9 @@ def _pending(item_id: str, bill_to: str, proforma_doc_ref: str, **over) -> Ledge
         notes=None,
     )
     defaults.update(over)
+    # Proforma-as-gate bills on qty_proposed; mirror qty_approved unless set explicitly.
+    if "qty_proposed" not in over:
+        defaults["qty_proposed"] = defaults["qty_approved"]
     return LedgerItem(item_id=item_id, bill_to=bill_to, **defaults)
 
 

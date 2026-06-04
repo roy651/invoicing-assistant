@@ -67,6 +67,10 @@ def _item(item_id: str, bill_to: str, **over) -> LedgerItem:
         notes=None,
     )
     defaults.update(over)
+    # Proforma-as-gate bills on qty_proposed; tests express the billed quantity via
+    # qty_approved, so mirror it unless a test sets qty_proposed explicitly.
+    if "qty_proposed" not in over:
+        defaults["qty_proposed"] = defaults["qty_approved"]
     return LedgerItem(item_id=item_id, bill_to=bill_to, **defaults)
 
 
@@ -231,32 +235,23 @@ def test_unmanaged_client_excluded():
     assert reqs == []
 
 
-@pytest.mark.parametrize("decision", ["defer", "hold", None])
-def test_non_billable_decision_excluded(decision):
-    profiles, pb, agrs = _refs()
-    item = _rollup_units()
-    item.decision = decision
-    reqs = build_proforma_requests([item], profiles, pb, agrs, _MONTH)
-    assert reqs == []
-
-
 @pytest.mark.parametrize("qty", [0.0, None])
-def test_zero_or_missing_qty_approved_excluded(qty):
+def test_zero_or_missing_qty_proposed_excluded(qty):
     profiles, pb, agrs = _refs()
     item = _rollup_units()
-    item.qty_approved = qty
+    item.qty_proposed = qty
     reqs = build_proforma_requests([item], profiles, pb, agrs, _MONTH)
     assert reqs == []
 
 
-@pytest.mark.parametrize("status", [None, "", "FALSE", "yes", "true"])
-def test_non_enum_status_confirmed_excluded(status):
-    """status_confirmed must be a real completion enum value — tested positively, not
-    by truthiness. A stray "FALSE"/"true" string (e.g. a bool serialized by
-    write_ledger) must NOT slip an unconfirmed item through to billing."""
+@pytest.mark.parametrize("status", [None, "", "not_started", "FALSE", "done"])
+def test_non_billable_status_agent_excluded(status):
+    """Proforma-as-gate: CREATE bills on the agent's status_agent — must be a real
+    billable enum (in_progress/complete). "not_started", empty, or a stray string
+    (e.g. a bool serialized by write_ledger) must NOT slip an item through to billing."""
     profiles, pb, agrs = _refs()
     item = _rollup_units()
-    item.status_confirmed = status
+    item.status_agent = status
     reqs = build_proforma_requests([item], profiles, pb, agrs, _MONTH)
     assert reqs == []
 
