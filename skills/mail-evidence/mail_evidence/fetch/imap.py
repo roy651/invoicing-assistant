@@ -193,6 +193,7 @@ class _RawMail:
     attachments_meta: list[AttachmentMeta] = field(default_factory=list)
     is_bulk: bool = False
     thread_id: str = ""  # set by _assign_thread_ids()
+    raw_bytes: bytes = b""  # original RFC822 — retained for offline re-export
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -214,6 +215,77 @@ def fetch_messages(
 
     Returns records sorted by date ascending.
     """
+    all_raws = _collect_raws(
+        client,
+        folders=folders,
+        watermark=watermark,
+        max_messages=max_messages,
+        window_days=window_days,
+    )
+    records = [_raw_to_record(r) for r in all_raws]
+    records.sort(key=lambda r: r.date)
+    return records
+
+
+@dataclass
+class RawBatch:
+    """
+    One bounded fetch, retaining the original RFC822 bytes for offline re-export.
+
+    records:       cross-threaded EvidenceRecords (date-sorted) — for summary/watermark.
+    raw_by_folder: original RFC822 bytes grouped by IMAP folder — for mbox export.
+    high_water:    max message date in the batch (the watermark to commit), or None.
+    """
+
+    records: list[EvidenceRecord]
+    raw_by_folder: dict[str, list[bytes]]
+    high_water: datetime | None
+
+    @property
+    def count(self) -> int:
+        return len(self.records)
+
+
+def fetch_raw_batch(
+    client: ImapClient,
+    *,
+    folders: list[str] | None = None,
+    watermark: datetime | None = None,
+    max_messages: int = 500,
+    window_days: int | None = None,
+) -> RawBatch:
+    """
+    Like fetch_messages, but also returns the original RFC822 bytes (grouped by
+    folder) and the batch high-water date. The 1.10 runner uses this to export an
+    mbox the offline harness can re-ingest, then commit the watermark.
+    """
+    all_raws = _collect_raws(
+        client,
+        folders=folders,
+        watermark=watermark,
+        max_messages=max_messages,
+        window_days=window_days,
+    )
+    records = sorted((_raw_to_record(r) for r in all_raws), key=lambda r: r.date)
+
+    raw_by_folder: dict[str, list[bytes]] = {}
+    for raw in all_raws:
+        raw_by_folder.setdefault(raw.folder, []).append(raw.raw_bytes)
+
+    high_water = max((r.date for r in records), default=None)
+    return RawBatch(records=records, raw_by_folder=raw_by_folder, high_water=high_water)
+
+
+def _collect_raws(
+    client: ImapClient,
+    *,
+    folders: list[str] | None,
+    watermark: datetime | None,
+    max_messages: int,
+    window_days: int | None,
+) -> list[_RawMail]:
+    """Fetch + cross-folder dedup + thread-id assignment. Shared by both public entry
+    points (parsed records vs raw export)."""
     if folders is None:
         folders = ["INBOX"]
 
@@ -259,10 +331,7 @@ def fetch_messages(
             break
 
     _assign_thread_ids(all_raws)
-
-    records = [_raw_to_record(r) for r in all_raws]
-    records.sort(key=lambda r: r.date)
-    return records
+    return all_raws
 
 
 # ── internal fetch ────────────────────────────────────────────────────────────
@@ -336,6 +405,7 @@ def _parse_raw(uid: int, data: dict, *, folder: str) -> _RawMail:
         body_text=body_text,
         attachments_meta=attachments,
         is_bulk=is_bulk,
+        raw_bytes=raw_bytes,
     )
 
 
