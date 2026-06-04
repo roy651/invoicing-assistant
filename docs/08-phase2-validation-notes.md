@@ -124,6 +124,35 @@ RoVo "additional charge" ($500, not catalog); Business Card ($400, not a standal
 catalog item). The user's position: items 3 and 4 should be resolvable from the email in
 the reasoning pass, not pre-filled.
 
+### 5a. Cold-start agreement gap (interpretation caveat)
+
+Some price agreements that override the price book may have been negotiated in months
+prior to the captured one, so they will not appear in this batch's email. Two effects:
+
+- For catalog items, this does **not** make a line score wrong: the oracle's expected
+  price is the price-book price (not the invoice amount), and the agent also defaults to
+  the price-book price, so both sides agree regardless of an unseen agreement. The actual
+  billed amount may differ from both (e.g. a line billed at $425 against a $1,300 catalog
+  item); that difference is Avigail's gate-time amendment, which the agent is not expected
+  to predict and which the metric does not test.
+- For the non-catalog items (IVORY IFU, RoVo "additional charge", Business Card), the
+  price exists only in an agreement. If that agreement predates the captured month, the
+  agent cannot recover it. Policy (set by the user): such a line is still placed in the
+  proforma but **priced at 0** — an explicit unresolved marker that surfaces the item on
+  the human's table to be priced at the gate, rather than being guessed or omitted. This
+  is a specification of invariant #4 ("flag, do not guess"), not a contradiction of it. In
+  the score these count as identified items but are excluded from the resolved-price
+  metric, so the expected symptom is a lower *resolved-line count*, not a wrong price.
+  (Implementation note: a 0-priced unresolved *item* must be distinguishable from the
+  0-priced end-client *subtitle* line, which `settle._is_zero_priced` treats as non-
+  billable.)
+
+Steady-state, agreements negotiated while the system runs are logged the month they are
+discussed and persist. Agreements predating the system belong to the cold-start
+history/opening-balance import, which is not performed for this first run. The invoice
+amounts are deliberately **not** back-filled into `agreements.csv` (doing so would encode
+the answer into the test).
+
 ## 6. Run model (Stage 1)
 
 The planned first run feeds the harness an **empty** settle input (the downloaded invoice
