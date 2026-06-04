@@ -158,6 +158,26 @@ class _FixtureContactStore:
         self._known.setdefault(email.lower(), "other")
 
 
+# Billing artifacts are the system's OWN output fed back as email — issued invoices,
+# proformas, receipts, price-quote notifications, and the internal month-end itemization.
+# They are NOT work evidence (settlement reads them from morning, which is truth), and
+# letting the reasoning pass see them is a cheat-sheet: it would read what was billed
+# instead of inferring it from the work correspondence. Dropped before reasoning.
+_BILLING_SUBJECT = re.compile(
+    r"\binvoices?\b|\breceipts?\b|פירוט|חשבונית|חשבון עסקה|קבלה|הצעת מחיר", re.I
+)
+_BILLING_SENDERS = ("notify@morning.co",)
+
+
+def is_billing_artifact(rec: EvidenceRecord) -> bool:
+    """A billing document fed back as email (issued invoice / proforma / receipt / quote
+    / internal itemization) — never work evidence. See [[comms-picture]]."""
+    frm = (rec.from_ or "").lower()
+    if any(s in frm for s in _BILLING_SENDERS):
+        return True
+    return bool(_BILLING_SUBJECT.search(rec.subject or ""))
+
+
 def ingest_evidence(
     fx: FixtureSet,
     *,
@@ -171,7 +191,8 @@ def ingest_evidence(
     deduped → tiered → conditioned, so bulk/marketing (T3) and judged-irrelevant (T2)
     threads are dropped here instead of reaching the reasoning seam. Judge and contact
     store are injectable; the fixture defaults keep all human threads and drop only
-    deterministic bulk.
+    deterministic bulk. Billing artifacts (the system's own invoices/itemizations fed
+    back as email) are dropped too — they are answer-key, not work evidence.
     """
     judge = judge or _KeepAllJudge()
     contact_store = contact_store or _FixtureContactStore()
@@ -188,7 +209,8 @@ def ingest_evidence(
     transcripts: list[EvidenceRecord] = []
     if fx.transcripts and _read_transcripts is not None:
         transcripts = _read_transcripts(fx.transcripts)
-    return unify(conditioned, transcripts)
+    evidence = unify(conditioned, transcripts)
+    return [r for r in evidence if not is_billing_artifact(r)]
 
 
 def load_invoices(fx: FixtureSet) -> list[dict]:

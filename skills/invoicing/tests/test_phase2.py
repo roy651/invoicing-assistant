@@ -17,14 +17,18 @@ from invoicing_rules.packet import (
     ProposedLine,
     ReviewPacket,
 )
+from datetime import datetime, timezone
+
 from invoicing_rules.phase2 import (
     ReplayReasoner,
     discover_fixtures,
     ingest_evidence,
+    is_billing_artifact,
     run_harness,
     score,
 )
 from invoicing_rules.state import LedgerItem, load_ledger
+from mail_evidence.records import EvidenceRecord
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "phase2"
 _MONTH = "2026-03"
@@ -152,6 +156,36 @@ def test_ingest_evidence_unifies_cross_folder_thread():
     assert len({e.thread_id for e in work}) == 1
     # CC (the subcontractor signal) survived ingestion.
     assert all("sub@studio.com" in e.cc for e in work)
+
+
+def test_billing_artifacts_are_dropped_not_used_as_cheat_sheet():
+    """Issued invoices / itemizations / receipts / morning notifications are the system's
+    own output fed back as email — answer-key, not work evidence. They must be excluded
+    from the reasoning corpus."""
+
+    def rec(frm, subj):
+        return EvidenceRecord(
+            id="x",
+            thread_id="x",
+            source="email",
+            date=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            body_text="",
+            from_=frm,
+            subject=subj,
+        )
+
+    # billing artifacts → dropped
+    assert is_billing_artifact(rec("avigail@ula.co.il", "May Invoice"))
+    assert is_billing_artifact(rec("katie@x.com", "Re: April Invoices"))  # plural
+    assert is_billing_artifact(rec("nurit@ula.co.il", "פירוט מאי 26"))  # itemization
+    assert is_billing_artifact(rec("notify@morning.co", "anything"))  # billing platform
+    # real work correspondence → kept
+    assert not is_billing_artifact(
+        rec("jen@sprigconsulting.com", "Apreo Website ready")
+    )
+    assert not is_billing_artifact(
+        rec("molly@sprigconsulting.com", "RoVo Landing Page")
+    )
 
 
 def test_ingest_evidence_drops_bulk_marketing():
