@@ -219,12 +219,49 @@ def spot_check(rows: list[dict], known_values: dict[str, float]) -> None:
         print("  All spot-checks passed.")
 
 
+# Item counts per category in the authoritative 2025 PDF (fixtures/2025PriceList.pdf).
+# A regenerated 2025 set with FEWER items than this lost a row somewhere between the PDF
+# and the source sheet — fail loudly (this is how 5 Marketing rows were silently dropped
+# before). Additions are fine (>=); update these only when the catalog itself grows.
+_PDF_2025_CATEGORY_COUNTS = {
+    "Brand Identity": 7,
+    "Web Design": 3,
+    "Marketing": 18,
+    "Digital": 8,
+    "Packaging": 6,
+    "Trade Shows": 5,
+    "Illustration": 11,
+    "3D & Animation": 9,
+    "General": 1,
+}
+
+
+def check_completeness(rows: list[dict]) -> list[str]:
+    """Return per-category shortfalls vs the 2025 PDF (empty list = complete)."""
+    from collections import Counter
+
+    counts = Counter(r["category"] for r in rows if r["version"] == "2025")
+    return [
+        f"{cat}: {counts.get(cat, 0)} items, expected >= {expected} (per 2025 PDF)"
+        for cat, expected in _PDF_2025_CATEGORY_COUNTS.items()
+        if counts.get(cat, 0) < expected
+    ]
+
+
 def main() -> None:
     if not SOURCE_CSV.exists():
         sys.exit(f"Source not found: {SOURCE_CSV}")
 
     print(f"Reading {SOURCE_CSV} ...")
     rows = normalize()
+
+    shortfalls = check_completeness(rows)
+    if shortfalls:
+        sys.exit(
+            "Price-book completeness check FAILED — a category is short vs "
+            "2025PriceList.pdf (likely a dropped row in the source sheet):\n  "
+            + "\n  ".join(shortfalls)
+        )
 
     rows_2025 = [r for r in rows if r["version"] == "2025"]
     rows_2026 = [r for r in rows if r["version"] == "2026"]
