@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from invoicing_rules.handoff import build_proforma_requests, create_and_record
-from invoicing_rules.settle import settle_ledger
+from invoicing_rules.settle import fetch_issued_invoices, settle_ledger
 from invoicing_rules.state import (
     ClientProfile,
     LedgerItem,
@@ -60,11 +60,14 @@ def _pending(item_id: str, bill_to: str, proforma_doc_ref: str, **over) -> Ledge
 
 
 def _line(desc: str, qty: float, unit_price: float) -> dict:
+    # morning READ shape: `price` is the UNIT price; `amount`/`amountTotal` is the
+    # line total. (The create payload differs — settlement reads, so it uses this.)
     return {
         "description": desc,
         "quantity": qty,
-        "unitPrice": unit_price,
-        "price": round(qty * unit_price, 2),
+        "price": unit_price,
+        "amount": round(qty * unit_price, 2),
+        "amountTotal": round(qty * unit_price, 2),
     }
 
 
@@ -74,12 +77,15 @@ def _invoice(
     linked: list[str],
     lines: list[dict],
     month="2026-03-15",
+    status: int = 0,
 ) -> dict:
+    # `linkedDocuments` is the morning read shape: a list of {id, type, ...} objects.
     return {
         "id": doc_id,
         "type": 305,
+        "status": status,
         "client": {"id": client_id},
-        "linkedDocumentIds": linked,
+        "linkedDocuments": [{"id": pid, "type": 300} for pid in linked],
         "income": lines,
         "documentDate": month,
     }
@@ -266,6 +272,7 @@ def test_settle_orphan_managed_backfilled():
     assert orphan.status_confirmed == "complete"
     assert orphan.qty_billed_actual == 2.0
     assert orphan.qty_billed_to_date == 2.0
+    assert orphan.unit_price == 400  # read from the income line's `price` field
     assert orphan.morning_doc_ref == "inv-2002"
     assert orphan.notes == "added manually in morning"
 
@@ -421,3 +428,29 @@ def test_create_then_settle_roundtrip(tmp_path):
     assert item.morning_doc_ref == "inv-5001"
     assert item.proforma_doc_ref is None
     assert item.qty_billed_to_date == 3.0
+
+
+# ── fetch_issued_invoices: status semantics (real read shape) ────────────────
+
+
+def test_fetch_issued_invoices_keeps_status_0_drops_cancelled(monkeypatch):
+    """A type-305 is fiscally issued at status 0 (unpaid); only CANCELLED (4) is
+    excluded. The previous status=[closed] filter would have returned nothing."""
+    captured = {}
+
+    def fake_search(client, **kwargs):
+        captured.update(kwargs)
+        return {
+            "items": [
+                {"id": "inv-a", "type": 305, "status": 0},  # issued, unpaid
+                {"id": "inv-b", "type": 305, "status": 1},  # issued, paid
+                {"id": "inv-c", "type": 305, "status": 4},  # cancelled → drop
+            ]
+        }
+
+    monkeypatch.setattr("morning_bridge.reads.search_documents", fake_search)
+    out = fetch_issued_invoices(object(), from_date="2026-04-01")
+
+    assert {d["id"] for d in out} == {"inv-a", "inv-b"}
+    assert "status" not in captured  # we do NOT filter by status in the query
+    assert captured["doc_type"] == [305]

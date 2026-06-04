@@ -105,8 +105,9 @@ DOC_TYPE_RECEIPT = 400
 DOC_TYPE_PRICE_QUOTE = 10
 
 # Document status codes
-DOC_STATUS_OPEN = 0  # draft / unpaid / in progress
-DOC_STATUS_CLOSED = 1  # issued / paid
+DOC_STATUS_OPEN = 0  # unpaid / in progress (a type-305 is still fiscally ISSUED)
+DOC_STATUS_CLOSED = 1  # paid / closed
+DOC_STATUS_CANCELLED = 4  # cancelled (carries a linked cancellation doc, type 330)
 
 
 def get_document(client: MorningClient, document_id: str) -> dict:

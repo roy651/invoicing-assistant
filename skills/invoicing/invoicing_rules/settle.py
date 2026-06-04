@@ -12,7 +12,8 @@ via `linkedDocumentIds`. Settlement reads the issued INVOICES as truth and match
 each ledger item to one (docs/02 "Proforma → Invoice linkage"):
 
   1. Primary — the item's `proforma_doc_ref` (set at RECORD) appears in an issued
-     invoice's `linkedDocumentIds`.
+     invoice's `linkedDocuments` (each a {id, type, ...} object — the morning READ
+     shape; the source proforma is the type-300 entry).
   2. Content fallback — same morning client + a line whose description matches the
      item (proforma deleted before linking, or linkedDocumentIds absent).
   3. No match — the item's proforma was never issued (deleted draft / deleted line /
@@ -153,10 +154,15 @@ def fetch_issued_invoices(
     to_date: str | None = None,
 ) -> list[dict]:
     """
-    Thin read-only wrapper: issued Tax Invoices (type 305, closed) in the window.
+    Thin read-only wrapper: issued Tax Invoices (type 305) in the window.
+
+    A type-305 is fiscal/ISSUED the moment it exists (drafts are proformas, type 300),
+    so we do NOT filter on `status` — that is payment/lifecycle state (0 unpaid, 1 paid),
+    not issued-ness, and real issued invoices are commonly status 0. We exclude only
+    CANCELLED invoices (status 4), whose billing was reversed and must never settle.
 
     Settlement reads issued invoices, not proformas. Returns the raw morning doc
-    dicts (each carries `linkedDocumentIds` back to its source proforma).
+    dicts (each carries `linkedDocuments` back to its source proforma).
 
     IMPORTANT: `from_date` must reach back to the OLDEST unsettled proforma, not just
     last month. Issuance is human-paced — a proforma created months ago may be
@@ -165,7 +171,7 @@ def fetch_issued_invoices(
     runner (task 1.10) owns choosing this date from the oldest pending row.
     """
     from morning_bridge.reads import (
-        DOC_STATUS_CLOSED,
+        DOC_STATUS_CANCELLED,
         DOC_TYPE_TAX_INVOICE,
         search_documents,
     )
@@ -173,11 +179,10 @@ def fetch_issued_invoices(
     resp = search_documents(
         client,
         doc_type=[DOC_TYPE_TAX_INVOICE],
-        status=[DOC_STATUS_CLOSED],
         from_date=from_date,
         to_date=to_date,
     )
-    return resp.get("items", [])
+    return [d for d in resp.get("items", []) if d.get("status") != DOC_STATUS_CANCELLED]
 
 
 def fetch_open_proformas(client: object) -> set[str]:
@@ -202,11 +207,12 @@ def _find_settlement(
     client_id: str | None,
     consumed: set[tuple[str, int]],
 ) -> tuple[dict | None, int | None]:
-    # Primary: the invoice whose linkedDocumentIds references this proforma. If the
+    # Primary: the invoice whose linkedDocuments references this proforma. If the
     # invoice exists but the item's line was deleted, idx is None → caller reverts
     # (we do NOT then hunt other invoices: this proforma's fate is decided).
     for doc in issued_docs:
-        if item.proforma_doc_ref in doc.get("linkedDocumentIds", []):
+        linked_ids = {str(d.get("id")) for d in doc.get("linkedDocuments", [])}
+        if item.proforma_doc_ref in linked_ids:
             return doc, _match_line_index(item, doc, consumed)
     # Content fallback: same client + a matching line.
     for doc in issued_docs:
@@ -258,7 +264,7 @@ def _orphan_row(line: dict, doc: dict, bill_to: str | None, idx: int) -> LedgerI
         assignee=None,
         item_kind="unit_based",
         billing_mode=None,
-        unit_price=_opt_float(line.get("unitPrice")),
+        unit_price=_opt_float(line.get("price")),
         currency=str(line.get("currency", "")) or "ILS",
         price_source=None,
         price_ref=None,
