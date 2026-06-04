@@ -23,6 +23,11 @@ _log = logging.getLogger(__name__)
 _FILENAME = "mail_evidence_watermark.json"
 
 
+def _filename(name: str | None) -> str:
+    """Per-account watermark file so each mailbox resumes independently."""
+    return f"mail_evidence_watermark_{name}.json" if name else _FILENAME
+
+
 def _default_state_dir() -> Path:
     here = Path(__file__).resolve()
     for candidate in [
@@ -40,13 +45,15 @@ def _default_state_dir() -> Path:
     return fallback
 
 
-def load_watermark(state_dir: Path | None = None) -> datetime | None:
+def load_watermark(
+    state_dir: Path | None = None, *, name: str | None = None
+) -> datetime | None:
     """
     Load the persisted watermark.
 
     Returns a UTC-aware datetime, or None (cold start) if no file exists.
     """
-    path = (state_dir or _default_state_dir()) / _FILENAME
+    path = (state_dir or _default_state_dir()) / _filename(name)
     if not path.exists():
         _log.info("mail-evidence: no watermark at %s — cold start", path)
         return None
@@ -64,7 +71,9 @@ def load_watermark(state_dir: Path | None = None) -> datetime | None:
         return None
 
 
-def commit_watermark(watermark: datetime, state_dir: Path | None = None) -> None:
+def commit_watermark(
+    watermark: datetime, state_dir: Path | None = None, *, name: str | None = None
+) -> None:
     """
     Persist watermark to disk.
 
@@ -73,7 +82,7 @@ def commit_watermark(watermark: datetime, state_dir: Path | None = None) -> None
     """
     dir_ = state_dir or _default_state_dir()
     dir_.mkdir(parents=True, exist_ok=True)
-    path = dir_ / _FILENAME
+    path = dir_ / _filename(name)
     utc = watermark.astimezone(timezone.utc)
     data = {"watermark_utc": utc.isoformat()}
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

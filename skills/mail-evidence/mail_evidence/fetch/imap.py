@@ -124,6 +124,18 @@ class ImapClient:
         port = int(port_str) if port_str else _DEFAULT_PORT
         return cls(host, port, user, password, mailbox=mailbox)
 
+    @classmethod
+    def for_account(cls, account: "object") -> "ImapClient":
+        """Build a client for an ImapAccount (mail_evidence.config). Kept loosely typed
+        to avoid a config→imap→config import cycle."""
+        return cls(
+            account.host,
+            account.port,
+            account.user,
+            account.password,
+            mailbox=account.inbox_folder,
+        )
+
     def connect(self) -> None:
         if self._imap is not None:
             return

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from mail_evidence import runner
+from mail_evidence.config import ImapAccount
 from mail_evidence.fetch.imap import ImapClient
 from mail_evidence.fetch.offline import ingest_email_export
 from mail_evidence.fetch.watermark import load_watermark
@@ -70,7 +71,10 @@ def two_folder_client() -> MagicMock:
 
 
 def _patch_client(monkeypatch, client: MagicMock) -> None:
-    monkeypatch.setattr(runner, "_make_client", lambda **_: client)
+    """Inject one account named 't' served by the mock client (the live seams)."""
+    acct = ImapAccount(name="t", host="h", port=993, user="u", password="p")
+    monkeypatch.setattr(runner, "_select_accounts", lambda name: [acct])
+    monkeypatch.setattr(runner, "_client_for", lambda account: client)
 
 
 def _mbox_count(path: Path) -> int:
@@ -91,12 +95,12 @@ def test_fetch_exports_mboxes_and_advances_watermark(
     rc = runner.main(["fetch", "--root", str(tmp_path), "--since", "2026-04-01"])
     assert rc == 0
 
-    inbox = tmp_path / "emails" / "INBOX.mbox"
-    sent = tmp_path / "emails" / "Sent.mbox"
+    inbox = tmp_path / "emails" / "t_INBOX.mbox"
+    sent = tmp_path / "emails" / "t_Sent.mbox"
     assert _mbox_count(inbox) == 1
     assert _mbox_count(sent) == 1
 
-    wm = load_watermark(state_dir=tmp_path)
+    wm = load_watermark(state_dir=tmp_path, name="t")
     assert wm is not None
     assert wm.year == 2026 and wm.month == 4 and wm.day == 2  # high-water = latest msg
 
@@ -122,8 +126,8 @@ def test_refetch_is_idempotent_by_message_id(tmp_path, monkeypatch, two_folder_c
     # Re-run with the SAME messages (day-granular SINCE overlap) — must not duplicate.
     runner.main(["fetch", "--root", str(tmp_path), "--since", "2026-04-01"])
 
-    assert _mbox_count(tmp_path / "emails" / "INBOX.mbox") == 1
-    assert _mbox_count(tmp_path / "emails" / "Sent.mbox") == 1
+    assert _mbox_count(tmp_path / "emails" / "t_INBOX.mbox") == 1
+    assert _mbox_count(tmp_path / "emails" / "t_Sent.mbox") == 1
 
 
 # ── guards ────────────────────────────────────────────────────────────────────
@@ -137,8 +141,8 @@ def test_no_advance_persists_batch_but_not_watermark(
         ["fetch", "--root", str(tmp_path), "--since", "2026-04-01", "--no-advance"]
     )
 
-    assert _mbox_count(tmp_path / "emails" / "INBOX.mbox") == 1
-    assert load_watermark(state_dir=tmp_path) is None
+    assert _mbox_count(tmp_path / "emails" / "t_INBOX.mbox") == 1
+    assert load_watermark(state_dir=tmp_path, name="t") is None
 
 
 def test_dry_run_writes_nothing(tmp_path, monkeypatch, two_folder_client):
@@ -148,7 +152,7 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch, two_folder_client):
     )
 
     assert not (tmp_path / "emails").exists()
-    assert load_watermark(state_dir=tmp_path) is None
+    assert load_watermark(state_dir=tmp_path, name="t") is None
 
 
 # ── watermark + probe commands ────────────────────────────────────────────────
@@ -157,10 +161,10 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch, two_folder_client):
 def test_watermark_command_cold_then_warm(
     tmp_path, monkeypatch, two_folder_client, capsys
 ):
+    _patch_client(monkeypatch, two_folder_client)  # inject account 't' first
     runner.main(["watermark", "--root", str(tmp_path)])
     assert "cold start" in capsys.readouterr().out
 
-    _patch_client(monkeypatch, two_folder_client)
     runner.main(["fetch", "--root", str(tmp_path), "--since", "2026-04-01"])
     runner.main(["watermark", "--root", str(tmp_path)])
     assert "2026-04-02" in capsys.readouterr().out
