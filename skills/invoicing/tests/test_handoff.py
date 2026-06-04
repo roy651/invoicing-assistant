@@ -3,7 +3,7 @@ Unit tests for the gate → create_proforma handoff (task 1.8).
 
 Covers billable selection, docs/01 §5 grouping (agency per-end-client + subtitle +
 heading; direct plain), qty_approved-driven line mapping + progress annotation,
-blocker raises (unresolved price / missing morning_client_id), the bridge-request
+unresolved price surfaced at 0, missing-morning_client_id blocker raises, the bridge-request
 shape (dry-run round-trip through create_proforma), and RECORD writing
 morning_doc_ref + ledger persistence.
 """
