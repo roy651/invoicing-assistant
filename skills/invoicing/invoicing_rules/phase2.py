@@ -159,19 +159,22 @@ class _FixtureContactStore:
 
 
 # Billing artifacts are the system's OWN output fed back as email — issued invoices,
-# proformas, receipts, price-quote notifications, and the internal month-end itemization.
-# They are NOT work evidence (settlement reads them from morning, which is truth), and
-# letting the reasoning pass see them is a cheat-sheet: it would read what was billed
-# instead of inferring it from the work correspondence. Dropped before reasoning.
+# proformas, receipts, and price-quote notifications. They are NOT work evidence
+# (settlement reads them from morning, which is truth), and letting the reasoning pass
+# see them is a cheat-sheet: it would read what was billed instead of inferring it from
+# the work correspondence. Dropped before reasoning. NOTE: a sub-contractor's work-hours
+# summary (e.g. Nurit's "פירוט מאי") is NOT a billing artifact — it is upstream work
+# evidence (what was done), so "פירוט" is deliberately NOT a trigger here.
 _BILLING_SUBJECT = re.compile(
-    r"\binvoices?\b|\breceipts?\b|פירוט|חשבונית|חשבון עסקה|קבלה|הצעת מחיר", re.I
+    r"\binvoices?\b|\breceipts?\b|חשבונית|חשבון עסקה|קבלה|הצעת מחיר", re.I
 )
 _BILLING_SENDERS = ("notify@morning.co",)
 
 
 def is_billing_artifact(rec: EvidenceRecord) -> bool:
     """A billing document fed back as email (issued invoice / proforma / receipt / quote
-    / internal itemization) — never work evidence. See [[comms-picture]]."""
+    notification) — never work evidence. A sub-contractor's work-hours summary is kept
+    (upstream evidence of what was done). See [[comms-picture]]."""
     frm = (rec.from_ or "").lower()
     if any(s in frm for s in _BILLING_SENDERS):
         return True

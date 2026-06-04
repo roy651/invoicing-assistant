@@ -174,10 +174,9 @@ def test_billing_artifacts_are_dropped_not_used_as_cheat_sheet():
             subject=subj,
         )
 
-    # billing artifacts → dropped
+    # billing artifacts (the system's issued output) → dropped
     assert is_billing_artifact(rec("avigail@ula.co.il", "May Invoice"))
     assert is_billing_artifact(rec("katie@x.com", "Re: April Invoices"))  # plural
-    assert is_billing_artifact(rec("nurit@ula.co.il", "פירוט מאי 26"))  # itemization
     assert is_billing_artifact(rec("notify@morning.co", "anything"))  # billing platform
     # real work correspondence → kept
     assert not is_billing_artifact(
@@ -186,6 +185,9 @@ def test_billing_artifacts_are_dropped_not_used_as_cheat_sheet():
     assert not is_billing_artifact(
         rec("molly@sprigconsulting.com", "RoVo Landing Page")
     )
+    # a sub-contractor's work-hours summary is upstream work evidence, NOT a billing
+    # artifact — it must be kept (per user: Nurit's "פירוט" is a valid pre-month summary)
+    assert not is_billing_artifact(rec("nurit@ula.co.il", "פירוט מאי 26"))
 
 
 def test_ingest_evidence_drops_bulk_marketing():
