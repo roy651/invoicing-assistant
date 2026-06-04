@@ -234,6 +234,31 @@ def test_score_catches_grouping_mismatch():
     assert m.passed is False
 
 
+def test_score_matches_new_item_by_description_not_id():
+    """The model assigns its own ids to NEW items found in email; the scorer must match
+    produced↔expected by description, not item_id — else every new item misses."""
+    produced = [
+        _item(
+            "AGENT-PICKED-ID-abc",
+            description="Roll-up banners (trade show)",
+            status_agent="complete",
+            end_client="ACME",
+        )
+    ]
+    expected = [
+        _item(
+            "ORACLE-rollup-002",
+            description="Roll-up banners (trade show)",
+            status_agent="complete",
+            end_client="ACME",
+        )
+    ]
+    report = score(produced, expected, ReviewPacket(None, _MONTH), no_auto_bill=True)
+    pr = next(m for m in report.metrics if m.name == "item_precision_recall")
+    assert pr.passed and "P=1.00 R=1.00" in pr.detail  # matched despite different ids
+    assert next(m for m in report.metrics if m.name == "grouping").passed
+
+
 # ── fixture discovery tolerance (cold-start) ─────────────────────────────────
 
 

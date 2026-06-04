@@ -35,6 +35,7 @@ Run:  uv run python -m invoicing_rules.phase2 <fixtures_root> [YYYY-MM]
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -304,6 +305,24 @@ class Phase2Report:
         return "\n".join(lines)
 
 
+_NONALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def _norm(desc: str | None) -> str:
+    """
+    Semantic match key for a work item: lowercase, non-alphanumeric runs → single
+    space, trimmed. Parentheticals are kept as words, so "Roll-up banners" and
+    "Roll-up banners (trade show)" stay distinct.
+
+    Matching produced↔expected on this (instead of `item_id`) is required because the
+    model assigns its own ids to NEW items it finds in email — an exact-id match would
+    miss every agent-identified item regardless of correctness. Grouping is deliberately
+    NOT part of the key (it compares bill_to/end_client of matched items), so a
+    misassigned client surfaces as a grouping failure, not a silent miss.
+    """
+    return _NONALNUM.sub(" ", (desc or "").lower()).strip()
+
+
 def score(
     produced: list[LedgerItem],
     expected: list[LedgerItem],
@@ -315,55 +334,57 @@ def score(
     """
     Compute the §07 metrics as projections over the relevant columns, so extra or
     missing columns in a reduced real `expected-ledger.csv` never break scoring.
+    Produced and expected rows are matched by normalized description (see `_norm`).
     """
-    prod = {it.item_id: it for it in produced}
-    exp = {it.item_id: it for it in expected}
-    both = [iid for iid in prod if iid in exp]
+    prod = {_norm(it.description): it for it in produced if _norm(it.description)}
+    exp = {_norm(it.description): it for it in expected if _norm(it.description)}
+    both = [k for k in prod if k in exp]
     metrics: list[Metric] = []
 
-    # 1. Grouping 100% — bill_to / end_client.
+    # 1. Grouping 100% — bill_to / end_client of semantically-matched items.
     gmis = [
-        iid
-        for iid in both
-        if (prod[iid].bill_to, prod[iid].end_client)
-        != (exp[iid].bill_to, exp[iid].end_client)
+        k
+        for k in both
+        if (prod[k].bill_to, prod[k].end_client) != (exp[k].bill_to, exp[k].end_client)
     ]
     metrics.append(
         Metric(
             "grouping",
             not gmis,
             f"{len(both) - len(gmis)}/{len(both)} match"
-            + (f"; mismatch={gmis}" if gmis else ""),
+            + (f"; mismatch={sorted(gmis)}" if gmis else ""),
         )
     )
 
-    # 2. Price 100% on resolved — over the packet's resolved lines (unit_price+price_ref).
+    # 2. Price 100% on resolved — packet lines with a real (non-zero) unit_price. A
+    #    0-priced line is the unresolved-price marker (see docs/08 §5a), not a resolved
+    #    price, so it is excluded here while still counting as an identified item below.
     packet_lines = {
-        ln.item_id: ln
+        _norm(ln.description): ln
         for bt in packet.groups
         for ec in bt.end_client_groups
         for ln in ec.lines
     }
-    resolved = [iid for iid, ln in packet_lines.items() if ln.unit_price is not None]
+    resolved = [k for k, ln in packet_lines.items() if ln.unit_price]
     pmis = [
-        iid
-        for iid in resolved
-        if iid in exp
-        and (packet_lines[iid].unit_price, packet_lines[iid].price_ref)
-        != (exp[iid].unit_price, exp[iid].price_ref)
+        k
+        for k in resolved
+        if k in exp
+        and (packet_lines[k].unit_price, packet_lines[k].price_ref)
+        != (exp[k].unit_price, exp[k].price_ref)
     ]
     metrics.append(
         Metric(
             "price_on_resolved",
             not pmis,
             f"{len(resolved) - len(pmis)}/{len(resolved)} resolved match"
-            + (f"; mismatch={pmis}" if pmis else ""),
+            + (f"; mismatch={sorted(pmis)}" if pmis else ""),
         )
     )
 
     # 3. Item precision / recall ≥ 0.90 — over agent-identified items (status_agent set).
-    prod_items = {iid for iid, it in prod.items() if it.status_agent}
-    exp_items = {iid for iid, it in exp.items() if it.status_agent}
+    prod_items = {k for k, it in prod.items() if it.status_agent}
+    exp_items = {k for k, it in exp.items() if it.status_agent}
     inter = prod_items & exp_items
     precision = len(inter) / len(prod_items) if prod_items else 1.0
     recall = len(inter) / len(exp_items) if exp_items else 1.0
@@ -378,9 +399,9 @@ def score(
 
     # 4. Zero false "complete" — agent never marks complete what the oracle says isn't.
     false_complete = [
-        iid
-        for iid in both
-        if prod[iid].status_agent == "complete" and exp[iid].status_agent != "complete"
+        k
+        for k in both
+        if prod[k].status_agent == "complete" and exp[k].status_agent != "complete"
     ]
     metrics.append(
         Metric(
@@ -388,7 +409,7 @@ def score(
             not false_complete,
             "none"
             if not false_complete
-            else f"{len(false_complete)}: {false_complete}",
+            else f"{len(false_complete)}: {sorted(false_complete)}",
         )
     )
 
