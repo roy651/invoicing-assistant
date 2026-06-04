@@ -352,6 +352,33 @@ def test_settle_content_match_tolerates_typo_and_affixes():
     assert item.qty_billed_to_date == 1.0
 
 
+def test_settle_short_description_ambiguous_match_stays_pending():
+    """A short/generic description ('Poster') that token-overlaps two lines equally is not
+    disambiguable — settle must leave it pending, not mis-claim a line (fails safe)."""
+    item = _pending(
+        "SPRIG-RHYTHMEDIX-poster",
+        "SPRIG",
+        "pf-1",
+        end_client="RHYTHMEDIX",
+        description="Poster",
+        qty_billed_to_date=0.5,
+    )
+    inv = _invoice(
+        "inv-1",
+        "morning-sprig-001",
+        [],  # content path
+        [
+            _line("Poster - clinic recruitment", 0.2, 1300),
+            _line("Poster - black version", 0.5, 130),
+        ],
+    )
+    report = settle_ledger([item], [inv], _profiles(), live_proforma_ids={"pf-1"})
+    assert report.settled == []
+    assert report.still_pending == [
+        "SPRIG-RHYTHMEDIX-poster"
+    ]  # left pending, not wrong
+
+
 # ── content fallback (linkedDocumentIds absent) ──────────────────────────────
 
 

@@ -13,8 +13,12 @@ done and how complete they are, and prepare **draft** invoices in morning
 
 1. **Drafts only.** Never issue, finalize, close, or email a document. The morning
    bridge must not expose those endpoints — enforce in code, not just prompt.
-2. **The human gate decides.** The agent proposes line items + quantities. Only the
-   user's explicit confirmation leads to a created draft. Never auto-bill.
+2. **The human gate is the conversion.** The agent proposes line items + quantities and
+   may create **draft proformas** autonomously (type 300 — non-fiscal, deletable). The
+   gate is Avigail's review at **proforma → invoice conversion** in morning, where she
+   edits/prunes/prices every line. The agent NEVER issues or converts. "Never auto-bill"
+   = never issue an invoice (creating a reviewable draft is not billing). *(CREATE no
+   longer waits on pre-approval gate columns; wired in task 1.10.)*
 3. **morning is truth.** `qty_billed_to_date` accumulates from what was *actually
    issued* (read back from morning), never from the agent's proposal or the gate.
 4. **Never invent prices.** A price comes from the normalized Price Book or a logged

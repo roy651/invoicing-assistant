@@ -241,13 +241,17 @@ def _match_line_index(
 
     Token-overlap (not startswith) is what real invoice lines need: they carry end-client
     prefixes, payment-stage suffixes, and typos ("RoVo - Landind page* - 1st payment" vs
-    "RoVo - Landing page") — the item's remaining tokens still carry the match. Picking the
-    highest-overlap line (not first) avoids mis-claiming a same-client neighbour.
+    "RoVo - Landing page") — the item's remaining tokens still carry the match.
+
+    Ambiguity guard: a short/generic description (e.g. a bare "Poster") can token-overlap
+    several lines equally. When the top two candidates TIE on overlap, the line is not
+    disambiguable, so we leave the item pending rather than mis-claim — fails safe (the
+    `live_proforma_ids` guard prevents a duplicate, and next cycle retries).
     """
     item_tokens = _tokens(item.description)
     if not item_tokens:
         return None
-    best_idx, best_ratio = None, 0.0
+    scored: list[tuple[float, int]] = []
     for idx, line in enumerate(doc.get("income", [])):
         if (str(doc["id"]), idx) in consumed:
             continue
@@ -256,9 +260,14 @@ def _match_line_index(
         ratio = len(item_tokens & _tokens(str(line.get("description", "")))) / len(
             item_tokens
         )
-        if ratio > best_ratio:
-            best_ratio, best_idx = ratio, idx
-    return best_idx if best_ratio >= _MATCH_MIN_RATIO else None
+        if ratio >= _MATCH_MIN_RATIO:
+            scored.append((ratio, idx))
+    if not scored:
+        return None
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    if len(scored) > 1 and scored[1][0] == scored[0][0]:
+        return None  # top-two tie → too generic to disambiguate → leave pending
+    return scored[0][1]
 
 
 def _recompute_status(item: LedgerItem) -> None:
