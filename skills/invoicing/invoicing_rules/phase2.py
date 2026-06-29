@@ -181,26 +181,28 @@ def is_billing_artifact(rec: EvidenceRecord) -> bool:
     return bool(_BILLING_SUBJECT.search(rec.subject or ""))
 
 
-def ingest_evidence(
-    fx: FixtureSet,
+def condition_corpus(
+    emails_dir: Path,
+    transcripts_dir: Path | None = None,
     *,
     judge: object | None = None,
     contact_store: object | None = None,
 ) -> list[EvidenceRecord]:
     """
-    Deliverable A + transcripts → one unified, date-sorted evidence list.
+    Conditioning, decoupled from the FixtureSet so the live runner can call it directly.
 
     Mirrors the production pipeline (mail_evidence.run): after assembly, each thread is
     deduped → tiered → conditioned, so bulk/marketing (T3) and judged-irrelevant (T2)
     threads are dropped here instead of reaching the reasoning seam. Judge and contact
-    store are injectable; the fixture defaults keep all human threads and drop only
-    deterministic bulk. Billing artifacts (the system's own invoices/itemizations fed
-    back as email) are dropped too — they are answer-key, not work evidence.
+    store are injectable; the defaults keep all human threads and drop only deterministic
+    bulk. Billing artifacts (the system's own invoices/itemizations fed back as email)
+    are dropped too — they are answer-key, not work evidence. Transcripts (if present and
+    the sibling skill is installed) are unified in. Returns one date-sorted evidence list.
     """
     judge = judge or _KeepAllJudge()
     contact_store = contact_store or _FixtureContactStore()
 
-    records = ingest_email_export(fx.emails) if fx.emails.exists() else []
+    records = ingest_email_export(emails_dir) if emails_dir.exists() else []
     conditioned: list[Thread] = []
     for thread in assemble_threads(records):
         thread = dedup_in_thread(thread)
@@ -210,10 +212,23 @@ def ingest_evidence(
             conditioned.append(kept)
 
     transcripts: list[EvidenceRecord] = []
-    if fx.transcripts and _read_transcripts is not None:
-        transcripts = _read_transcripts(fx.transcripts)
+    if transcripts_dir and _read_transcripts is not None:
+        transcripts = _read_transcripts(transcripts_dir)
     evidence = unify(conditioned, transcripts)
     return [r for r in evidence if not is_billing_artifact(r)]
+
+
+def ingest_evidence(
+    fx: FixtureSet,
+    *,
+    judge: object | None = None,
+    contact_store: object | None = None,
+) -> list[EvidenceRecord]:
+    """Deliverable A + transcripts → one unified, date-sorted evidence list (FixtureSet
+    wrapper around condition_corpus)."""
+    return condition_corpus(
+        fx.emails, fx.transcripts, judge=judge, contact_store=contact_store
+    )
 
 
 def load_invoices(fx: FixtureSet) -> list[dict]:

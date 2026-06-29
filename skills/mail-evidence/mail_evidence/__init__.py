@@ -11,6 +11,7 @@ Public API:
   classify_tier                                              — T1/T2/T3 classification
   condition                                                  — promote or drop T2/T3
   run                                                        — full pipeline iterator
+  render_corpus                                              — conditioned evidence → work-thread text
   load_watermark, commit_watermark                           — watermark persistence
 """
 
@@ -23,6 +24,7 @@ from mail_evidence.fetch.watermark import commit_watermark, load_watermark
 from mail_evidence.pipeline import run
 from mail_evidence.promote import condition
 from mail_evidence.protocols import ContactStore, RelevanceJudge
+from mail_evidence.render import render_corpus
 from mail_evidence.records import (
     AttachmentMeta,
     EvidenceRecord,
@@ -51,6 +53,7 @@ __all__ = [
     "dedup_in_thread",
     "classify_tier",
     "condition",
+    "render_corpus",
     # pipeline
     "run",
     # watermark
